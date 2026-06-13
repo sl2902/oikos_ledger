@@ -68,11 +68,15 @@ Tracks every CSV upload event and ingestion pipeline status.
 | `account_id` | UUID FK → `bank_accounts.id` | |
 | `filename` | TEXT | Original filename |
 | `s3_key` | TEXT | S3 object key |
-| `status` | TEXT | pending \| processing \| complete \| failed |
+| `status` | TEXT | pending \| processing \| complete \| failed \| cancelled |
 | `row_count` | INTEGER | Nullable — set after parsing |
 | `error_message` | TEXT | Nullable — set on failure |
 | `uploaded_at` | TIMESTAMPTZ | |
 | `completed_at` | TIMESTAMPTZ | Nullable |
+| `opening_balance` | NUMERIC(15,2) | Nullable — account balance before first transaction in statement. Derived from first row: `closing + debit - credit`. |
+| `closing_balance` | NUMERIC(15,2) | Nullable — account balance after last transaction in statement. |
+| `balance_verified` | BOOLEAN | Nullable — true if all row closing balances are mathematically consistent. False if any discrepancy detected. Null if closing balance not available in CSV. |
+| `balance_discrepancy` | NUMERIC(15,2) | Nullable — absolute difference between expected and actual closing balance. Null if `balance_verified` is true. |
 
 ---
 
@@ -91,6 +95,22 @@ Normalised merchant registry. Raw bank description strings are resolved to canon
 | `embedding` | VECTOR(1536) | pgvector |
 | `created_at` | TIMESTAMPTZ | |
 | `updated_at` | TIMESTAMPTZ | |
+
+---
+
+### Merchant Registry
+
+Append-only cache of LLM normalization results. Written to after every successful LLM call. Read before calling LLM — a registry hit skips the LLM entirely.
+
+**Lookup strategy:**
+- `ILIKE` partial match on `canonical_name` using the first 20 characters of the extracted merchant name.
+
+**Write strategy:**
+- `INSERT ... ON CONFLICT DO UPDATE` — latest LLM result always wins. Category is overridden by deterministic categorization before upsert, so the stored category reflects the deterministic result when one is available.
+
+**Limitations:**
+- Registry is only populated for transactions that go through the LLM path. Deterministic transactions (UPI with keyword match, bill payments, gateway patterns) do not write to the registry.
+- Fuzzy matching via `pg_trgm` is planned but not yet implemented — the registry is too sparse on first run for similarity thresholds to be reliable.
 
 ---
 
@@ -120,11 +140,12 @@ Core financial data. **Append-only — no `updated_at`.** Rows are never updated
 | `account_id` | UUID FK → `bank_accounts.id` | |
 | `merchant_id` | UUID FK → `merchants.id` | Nullable |
 | `upload_id` | UUID FK → `uploads.id` | |
+| `row_number` | INTEGER | Nullable — original CSV row position. Sort by `(transaction_date DESC, row_number DESC)` to show newest transactions first while preserving bank statement order within each day. |
 | `transaction_date` | DATE | |
 | `raw_description` | TEXT | Original bank string — never modified |
 | `normalized_merchant` | TEXT | LLM-resolved |
 | `amount` | NUMERIC(12,2) | Always positive |
-| `closing_balance` | NUMERIC(15,2) | Nullable — running account balance after this transaction as reported by the bank. Not all banks include this in CSV exports. A future balance-verification pass will check that opening balance + credits − debits = final closing balance; a mismatch indicates missing or duplicate transactions. |
+| `closing_balance` | NUMERIC(15,2) | Nullable — running account balance after this transaction as reported by the bank. Used for balance verification and per-month opening/closing balance display. |
 | `currency` | TEXT | ISO 4217 |
 | `transaction_type` | TEXT | debit \| credit |
 | `reference_number` | TEXT | Nullable — `Chq/Ref Number` from bank CSV; used for deduplication |

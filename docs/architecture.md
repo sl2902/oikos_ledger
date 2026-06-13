@@ -70,17 +70,69 @@ app/app/api/auth/[...nextauth]/route.ts  — NextAuth route handler
 
 ### Ingestion Pipeline — AWS Lambda
 
-Implemented in Iteration 2. Pipeline stages:
+**Flow**
 
-1. **`parsers/`** — one deterministic CSV parser per bank (`hdfc.py`, `sbi.py`, `icici.py`, `axis.py`). Each parser defines a `column_map` mapping canonical field names to possible CSV header variants. `parser.py` routes by `bank_name` with fallback header-signature detection.
-2. **`normalizer.py`** — two-stage normalization:
-   - Stage 1 (deterministic): `detect_payment_method()` classifies UPI/NEFT/IMPS/ATM/etc. For UPI, `parse_upi_narration()` extracts merchant, VPA, app, and counterparty bank via regex. `categorize_transaction()` scores 18 keyword categories.
-   - Stage 2 (LLM): Only called when Stage 1 returns category "Other" or merchant is unknown. Uses Claude Haiku via `anthropic.AsyncAnthropic`. Concurrent via `asyncio.gather` with semaphore cap of 5.
-   - ~70-80% of Indian transactions match deterministic rules; LLM cost is proportionally low.
-3. **`embedder.py`** — batched `text-embedding-3-small` calls via OpenAI. Batch size 100. Falls back to zero vector on error.
-4. **`geocoder.py`** — stub returning None. Implemented in Iteration 5.
-5. **`balance_verifier.py`** — runs after CSV parsing, before normalization. Verifies that closing balances are mathematically consistent row by row (tolerance: ₹0.01 for rounding). Opening balance is derived from the first row: `first_closing + first_debit - first_credit`. On failure the upload proceeds; the discrepancy is flagged in the UI. Results (`opening_balance`, `closing_balance`, `balance_verified`, `balance_discrepancy`) are stored on the `uploads` row.
-6. **`lambda_handler.py`** — orchestrates all stages. Implements idempotency guard (aborts if upload status is not `pending`). Supports `local_file_path` event key for testing without S3.
+```
+S3 upload → Lambda → Parse CSV → Balance Verify →
+Normalize (Deterministic + LLM) → Embed → Write Aurora
+```
+
+**Stage 1: CSV Parsing**
+
+- Bank-specific parsers per supported bank
+- HDFC parser overrides `base.parse_csv()` to handle narrations with embedded commas (HDFC exports unquoted fields even when narration contains commas)
+- Each parsed row assigned a `row_number` — original CSV position used for intra-day ordering
+- Closing balance extracted per row for balance verification
+
+**Stage 2: Balance Verification**
+
+- Runs after parsing, before normalization
+- Computes opening balance from first row: `opening = first_closing + first_debit - first_credit`
+- Verifies each row: `previous_closing ± amount = current_closing`
+- Tolerance: ±₹0.01 for floating point rounding
+- Results stored in `uploads` table: `opening_balance`, `closing_balance`, `balance_verified`, `balance_discrepancy`
+- Verification failure does not reject the upload — flagged in UI with yellow warning badge
+
+**Stage 3: Normalization (Two-Stage)**
+
+*Deterministic path (runs first):*
+
+- Payment gateway detection — regex matches `{ALPHANUM}/{GATEWAY_PREFIX}{MERCHANT}` pattern. Known prefixes: RAZP, PAYU, CCAV, CSHFRE, PAYTM etc. Built dynamically from `PAYMENT_GATEWAY_PREFIXES` sorted longest-first to avoid partial matches
+- Bill payment override — `IB BILLPAY DR` pattern matched before LLM. Biller code extracted and mapped to merchant name. Always returns Finance/Credit Card, `needs_llm=False`
+- Payment method detection — keyword patterns per method
+- UPI parsing — extracts merchant, VPA, app, bank from HDFC dash-separated UPI format
+- Keyword categorization — scoring-based, longest match wins. UPI transactions with no keyword match default to Transfer
+- Subcategory detection — keyword map per subcategory
+
+*LLM path (only when `needs_llm=True`):*
+
+- Merchant registry lookup by extracted merchant name using `ILIKE` partial match
+- Registry hit → return stored values, no LLM call
+- Registry miss → call LLM (`gpt-4o-mini`, `temperature=0`)
+- Deterministic categorization always overrides LLM category when deterministic returns non-Other result
+- Upsert result into `merchants` table
+
+**Stage 4: Embedding**
+
+- OpenAI `text-embedding-3-small`
+- 1536 dimensions — matches pgvector column
+- Batch of 100 transactions per API call
+
+**Stage 5: Database Write**
+
+- `INSERT ... ON CONFLICT DO NOTHING` for idempotency
+- Two unique constraints: `reference_number` and `(date, amount, merchant)`
+- Closing balance written per transaction row
+- Row number preserved for display ordering
+
+**Normalization Known Limitations**
+
+- Indian bank narrations are unstructured and inconsistent
+- Same merchant appears differently across payment methods: `UPI-SWIGGY-...`, `K4UXS7/PAYUSWIGGYIN`, `PAYTMSWIGGYCOM`
+- Gateway+merchant+domain concatenated without separators: `PAYTMSWIGGYCOM` — no reliable way to split without merchant whitelist
+- BESCOM exception: `COM` is part of company name, not domain suffix — hardcoded exception required
+- Numeric prefixes in UPI merchant names stripped via regex
+- LLM `temperature=0` for deterministic results but registry may have stale entries from previous runs
 
 Lambda is triggered asynchronously by the Next.js upload Route Handler after the CSV is stored in S3. When AWS is not configured, the Route Handler creates the upload row and skips S3/Lambda gracefully.
 
@@ -90,9 +142,17 @@ Lambda is triggered asynchronously by the Next.js upload Route Handler after the
 
 **Current provider:** Supabase is used during development while AWS credits are pending. Aurora PostgreSQL replaces it in production. The switch requires only changing connection strings in environment variables — no code changes.
 
+**Cluster:** oikos-ledger (ap-south-1) — Aurora PostgreSQL Serverless v2
+- Min ACU: 0 (dev) — set to 0.5 before demo
+- Max ACU: 4
+- Extensions: pgvector, postgis, pg_trgm
+- SSL: `rejectUnauthorized=false` (CA cert path issues in Lambda container) — TODO: configure `global-bundle.pem` for production
+- Direct connection (no RDS Proxy) — acceptable for hackathon scale. RDS Proxy documented as production scaling strategy in ADR
+
 **Extensions:**
 - **pgvector** — `VECTOR(1536)` columns on `transactions.embedding`, `merchants.embedding`, and `query_cache.query_embedding`. Enables cosine similarity search for semantic transaction lookup and cache hit detection.
 - **PostGIS** — `GEOMETRY(Point, 4326)` columns on `transactions.location` and `merchants.location`. Enables radius and bounding-box geospatial queries on merchant and transaction positions.
+- **pg_trgm** — trigram similarity index. Planned for fuzzy merchant name matching once the registry has sufficient entries.
 
 **Connection strategy:**
 
@@ -104,12 +164,30 @@ Lambda is triggered asynchronously by the Next.js upload Route Handler after the
 
 The Session pooler is required for scripts because SQLAlchemy uses the extended query protocol, which the Transaction pooler does not support.
 
+### Lambda
+
+- **Runtime:** Python 3.12 container image
+- **Memory:** 512 MB — **Timeout:** 300 s
+- **ECR:** `oikos-ledger-ingestion` (ap-south-1)
+- **Environment variables:** `DATABASE_URL`, `OPENAI_API_KEY`, `NORMALIZER_PROVIDER`, `NORMALIZER_MODEL`, `NORMALIZER_MAX_CONCURRENCY`, `AWS_S3_BUCKET`
+- `AUTH_SECRET` is optional with an empty default (used by Next.js only, not Lambda)
+- `AWS_LAMBDA_FUNCTION_NAME` is a reserved key — not set via CLI
+
+### Deployment
+
+`./scripts/deploy_lambda.sh`:
+
+1. Builds Docker image from `ingestion/Dockerfile`
+2. Pushes to ECR
+3. Updates Lambda function code
+4. Updates environment variables (single `--environment` flag with all vars on one line — no newlines, which Lambda CLI rejects)
+5. Uses `--output text --query` to suppress verbose JSON output
+
 ### File Storage — AWS S3
 
-Not yet provisioned. Planned:
 - Raw CSV uploads stored under a per-user prefix
-- Lifecycle policy to expire raw uploads after 90 days
 - Lambda reads from S3 using the object key passed by the Route Handler
+- Lifecycle policy to expire raw uploads after 90 days (planned)
 
 ---
 
