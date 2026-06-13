@@ -24,3 +24,8 @@ tests/fixture/statements/*
 
 # pem
 app/global-bundle.pem
+
+# misc
+output.json
+scripts/test_hdfc.csv
+ingestion/tests/fixtures/statements/test_statement.csv
