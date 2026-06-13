@@ -23,7 +23,7 @@ export function TransactionsPanel() {
   const currencySymbol =
     SUPPORTED_CURRENCIES.find((c) => c.code === selectedAccount?.currency)?.symbol ?? "₹"
 
-  const { availableMonths } = useAvailableMonths(selectedAccountId)
+  const { availableMonths, mutate: mutateMonths } = useAvailableMonths(selectedAccountId)
 
   // Reset everything on account switch
   useEffect(() => {
@@ -66,6 +66,15 @@ export function TransactionsPanel() {
     monthTotalDebits,
     monthTotalCredits,
   } = useTransactions(selectedAccountId, { ...filters, page })
+
+  // Reset when no months available (transactions deleted)
+  useEffect(() => {
+    if (!isLoading && availableMonths.length === 0) {
+      setFilters({})
+      setPage(1)
+      setSelectedMonth(null)
+    }
+  }, [availableMonths.length, isLoading])
 
   // Client-side payment_method filter uses the effective payment_method from the server
   const displayTransactions = useMemo(() => {
@@ -121,7 +130,10 @@ export function TransactionsPanel() {
           </div>
           <UploadStatementModal
             bankName={selectedAccount.bank_name}
-            onSuccess={mutateTransactions}
+            onSuccess={() => {
+              mutateTransactions()
+              mutateMonths()
+            }}
           />
         </div>
       )}
@@ -147,13 +159,23 @@ export function TransactionsPanel() {
           <div className="flex h-32 items-center justify-center text-sm text-destructive">
             Failed to load transactions. Please refresh.
           </div>
-        ) : displayTransactions.length === 0 ? (
-          <div className="flex h-32 items-center justify-center">
+                ) : displayTransactions.length === 0 ? (
+          <div className="flex flex-col h-32 items-center justify-center gap-3">
             <p className="text-sm text-muted-foreground">
-              {transactions.length === 0
+              {transactions.length === 0 && selectedMonth !== null
+                ? "No transactions found. If you recently deleted data, refresh the page."
+                : transactions.length === 0
                 ? "No transactions yet. Upload a bank statement to get started."
                 : "No transactions match the current filters."}
             </p>
+            {transactions.length === 0 && selectedMonth !== null && (
+              <button
+                onClick={() => window.location.reload()}
+                className="text-sm text-primary underline underline-offset-2"
+              >
+                Refresh
+              </button>
+            )}
           </div>
         ) : (
           grouped.map(([key, group], index) => (

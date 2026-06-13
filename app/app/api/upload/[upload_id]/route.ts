@@ -1,5 +1,5 @@
 import { auth } from "@/auth"
-import { cancelUpload, getUploadById } from "@/lib/db/queries/transactions"
+import { cancelUpload, deleteUpload, getUploadById } from "@/lib/db/queries/transactions"
 
 export const dynamic = "force-dynamic"
 
@@ -39,7 +39,7 @@ export async function GET(
 }
 
 export async function DELETE(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ upload_id: string }> },
 ) {
   const session = await auth()
@@ -54,6 +54,22 @@ export async function DELETE(
     return Response.json({ error: "Not found" }, { status: 404 })
   }
 
+  const { searchParams } = new URL(request.url)
+  const force = searchParams.get("force") === "true"
+
+  if (force) {
+    // Hard delete from upload history — block only in-progress uploads
+    if (upload.status === "pending" || upload.status === "processing") {
+      return Response.json(
+        { error: "Cannot delete an upload that is still processing" },
+        { status: 409 },
+      )
+    }
+    await deleteUpload(upload_id)
+    return Response.json({ upload_id, status: "deleted" })
+  }
+
+  // Cancel flow — preserve race-condition 409 for polling modal
   if (upload.status === "complete") {
     return Response.json(
       {

@@ -7,15 +7,23 @@ export interface MonthTab {
 }
 
 export function useAvailableMonths(accountId: string | null) {
-  const { data, error, isLoading } = useSWR<MonthTab[]>(
+  const { data, error, isLoading,mutate } = useSWR<MonthTab[]>(
     accountId ? `/api/transactions/months?account_id=${accountId}` : null,
     fetcher,
-    { revalidateOnFocus: false },
+    { 
+      revalidateOnFocus: false,
+      revalidateOnMount: true, 
+    },
   )
+
+  // console.log("months error:", error)
+  // console.log("months isLoading:", isLoading)
+  // console.log("months data:", data)
 
   return {
     availableMonths: data ?? [],
     isLoading,
     isError: !!error,
+    mutate,
   }
 }

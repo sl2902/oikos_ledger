@@ -72,6 +72,19 @@ export async function cancelUpload(uploadId: string): Promise<boolean> {
 }
 
 export async function deleteUpload(uploadId: string) {
+  const txns = await db
+    .select({ id: transactions.id })
+    .from(transactions)
+    .where(eq(transactions.upload_id, uploadId))
+
+  const txnIds = txns.map((t) => t.id)
+
+  if (txnIds.length > 0) {
+    await db
+      .delete(transaction_amendments)
+      .where(inArray(transaction_amendments.transaction_id, txnIds))
+  }
+
   await db.delete(transactions).where(eq(transactions.upload_id, uploadId))
   await db.delete(uploads).where(eq(uploads.id, uploadId))
 }

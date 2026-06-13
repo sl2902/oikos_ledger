@@ -5,6 +5,7 @@ import json
 import logging
 import re
 import uuid
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Protocol, TypedDict
 
@@ -130,6 +131,7 @@ class OpenAINormalizerClient:
             response = await self._client.chat.completions.create(
                 model=self._model,
                 max_tokens=200,
+                temperature=0,
                 messages=[{"role": "user", "content": prompt}],
             )
             text = response.choices[0].message.content or ""
@@ -351,6 +353,43 @@ def normalize_deterministic(row: ParsedRow) -> _PartialNormalized:
         category = cat_override
     needs_llm = category == "Other" or merchant is None
 
+    # Bill payment narration override
+    # Format: IB BILLPAY DR-{BILLER_CODE}-{BANK}-NETBANK,...
+    BILL_PAY_MERCHANT_MAP = {
+        "HDFCSI": "HDFC Credit Card",
+    }
+
+    if "IB BILLPAY DR" in narration.upper():
+        bill_match = re.match(
+            r'IB\s+BILLPAY\s+DR-([^-]+)-', narration, re.IGNORECASE
+        )
+        if bill_match:
+            biller_code = bill_match.group(1).strip().upper()
+            merchant = BILL_PAY_MERCHANT_MAP.get(biller_code, biller_code.title())
+        else:
+            merchant = "Bill Payment"
+        
+        return _PartialNormalized(
+            transaction_date=row["transaction_date"],
+            raw_description=narration,
+            amount=row["amount"],
+            transaction_type=row["transaction_type"],
+            reference_number=row["reference_number"],
+            closing_balance=row.get("closing_balance"),
+            row_number=row.get("row_number"),
+            payment_method="Bill Pay",
+            upi_merchant=None,
+            upi_app=None,
+            upi_vpa=None,
+            upi_ref=None,
+            upi_counterparty_bank=None,
+            merchant=merchant,
+            category="Finance",
+            subcategory="Credit Card",
+            needs_llm=False,
+            gateway=None,
+        )
+
     log.debug("Deterministic normalization", extra={
         "raw": narration[:60],
         "gateway_detected": None,
@@ -449,7 +488,7 @@ async def normalize_with_llm(
         final_subcategory = result["subcategory"]
 
         # Override LLM category if deterministic finds something better
-        if final_category == "Other" and det_cat_result != "Other":
+        if det_cat_result != "Other":
             final_category = det_cat_result
         if det_category:
             final_category = det_category
@@ -504,10 +543,15 @@ async def normalize_with_llm(
                 "subcategory": final_subcategory,
             })
     except Exception as exc:
-        log.warning("Merchant registry upsert failed", extra={
-            "canonical_name": result["merchant_name"],
-            "error": str(exc),
-        })
+        # log.warning("Merchant registry upsert failed", extra={
+        #     "canonical_name": result["merchant_name"],
+        #     "error": str(exc),
+        # })
+        log.warning(
+            "Merchant registry upsert failed: %s — merchant: %s",
+            str(exc),
+            result["merchant_name"],
+        )
 
     return _build_normalized(partial, result["merchant_name"], final_category, final_subcategory)
 

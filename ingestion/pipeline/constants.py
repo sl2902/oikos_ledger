@@ -196,7 +196,7 @@ CATEGORY_KEYWORDS: dict[str, list[str]] = {
     ],
     "Investment": [
         "zerodha", "groww", "upstox", "coin by zerodha", "kuvera",
-        "paytm money", "nps", "ppf", "epfo",
+        "paytm money", "nps", "ppf", "epfo", "hdfcsec",
         "sip", "mutual fund", "mf redemption", "mf purchase",
         "fixed deposit", "fd", "recurring deposit", "rd",
         "stocks", "equity", "demat", "ipo", "hsl sec", "hsl", 
@@ -287,7 +287,7 @@ SUBCATEGORY_KEYWORDS: dict[str, list[str]] = {
     # Finance
     "EMI": ["emi", "loan", "equated"],
     "Credit Card": ["credit card", "card payment", "cc pay"],
-    "Investment": ["mutual fund", "sip", "zerodha", "groww",
+    "Investment": ["mutual fund", "sip", "zerodha", "groww", "hdfcsec",
                    "upstox", "stocks", "shares"],
 }
 

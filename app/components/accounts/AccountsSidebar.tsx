@@ -1,13 +1,22 @@
 "use client"
 
+import { useState } from "react"
+import { History } from "lucide-react"
+import { mutate as globalMutate } from "swr"
 import { useAccounts } from "@/components/accounts/AccountsContext"
 import { AddBankAccountModal } from "@/components/bank_accounts/AddBankAccountModal"
 import { BankLogo } from "@/components/bank_accounts/BankLogo"
+import { UploadHistoryModal } from "@/components/uploads/UploadHistoryModal"
 import { getBankDomain } from "@/lib/constants/banks"
 import type { SupportedBankName } from "@/lib/constants/banks"
 
 export function AccountsSidebar() {
   const { accounts, isLoading, selectedAccountId, setSelectedAccountId, mutate } = useAccounts()
+  const [historyAccountId, setHistoryAccountId] = useState<string | null>(null)
+
+  const historyAccount = historyAccountId
+    ? (accounts.find((a) => a.id === historyAccountId) ?? null)
+    : null
 
   return (
     <aside className="flex w-[220px] shrink-0 flex-col border-r">
@@ -32,30 +41,44 @@ export function AccountsSidebar() {
               const isSelected = account.id === selectedAccountId
               return (
                 <li key={account.id}>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedAccountId(account.id)}
-                    className={`flex w-full items-center gap-2.5 px-3 py-2.5 text-left transition-colors hover:bg-accent ${
-                      isSelected ? "bg-accent" : ""
+                  <div
+                    className={`flex items-center transition-colors ${
+                      isSelected ? "bg-accent" : "hover:bg-accent"
                     }`}
                   >
-                    <BankLogo
-                      domain={getBankDomain(account.bank_name as SupportedBankName)}
-                      bankName={account.bank_name}
-                    />
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-xs font-medium leading-snug">
-                        {account.bank_name}
-                      </p>
-                      <p className="truncate text-xs capitalize leading-snug text-muted-foreground">
-                        {account.account_type}
-                        {account.account_nickname ? ` · ${account.account_nickname}` : ""}
-                      </p>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedAccountId(account.id)}
+                      className="flex flex-1 items-center gap-2.5 px-3 py-2.5 text-left"
+                    >
+                      <BankLogo
+                        domain={getBankDomain(account.bank_name as SupportedBankName)}
+                        bankName={account.bank_name}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-xs font-medium leading-snug">
+                          {account.bank_name}
+                        </p>
+                        <p className="truncate text-xs capitalize leading-snug text-muted-foreground">
+                          {account.account_type}
+                          {account.account_nickname ? ` · ${account.account_nickname}` : ""}
+                        </p>
+                      </div>
+                      {isSelected && (
+                        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
+                      )}
+                    </button>
                     {isSelected && (
-                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
+                      <button
+                        type="button"
+                        onClick={() => setHistoryAccountId(account.id)}
+                        className="mr-2 shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                        title="Upload history"
+                      >
+                        <History className="h-3.5 w-3.5" />
+                      </button>
                     )}
-                  </button>
+                  </div>
                 </li>
               )
             })}
@@ -71,6 +94,21 @@ export function AccountsSidebar() {
           }}
         />
       </div>
+
+      {historyAccount && (
+        <UploadHistoryModal
+          accountId={historyAccount.id}
+          bankName={historyAccount.bank_name}
+          onDelete={() => {
+            globalMutate(
+              (key: unknown) =>
+                typeof key === "string" && key.startsWith("/api/transactions"),
+            )
+            setHistoryAccountId(null)
+          }}
+          onClose={() => setHistoryAccountId(null)}
+        />
+      )}
     </aside>
   )
 }
