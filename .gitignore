@@ -21,3 +21,6 @@ htmlcov/
 
 # fixture
 tests/fixture/statements/*
+
+# pem
+app/global-bundle.pem
