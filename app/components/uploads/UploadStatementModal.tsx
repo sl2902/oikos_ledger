@@ -32,6 +32,7 @@ type State =
       duplicate?: boolean
       balanceVerified?: boolean
       balanceDiscrepancy?: string | null
+      droppedRowsCount?: number
     }
   | { phase: "error"; message: string }
 
@@ -243,6 +244,7 @@ export function UploadStatementModal({ accountId: accountIdProp, bankName, onSuc
               rowCount: data.row_count ?? undefined,
               balanceVerified: data.balance_verified,
               balanceDiscrepancy: data.balance_discrepancy,
+              droppedRowsCount: data.dropped_rows_count ?? 0,
             })
           } else if (data.status === "failed") {
             stopPolling()
@@ -402,7 +404,18 @@ export function UploadStatementModal({ accountId: accountIdProp, bankName, onSuc
                   <AlertTriangle className="h-4 w-4 shrink-0 text-yellow-500" />
                   <span>
                     Balance discrepancy detected — some transactions may be
-                    missing. Discrepancy: ₹{state.balanceDiscrepancy}
+                    missing. Check Upload History for details.
+                  </span>
+                </div>
+              )}
+              {state.droppedRowsCount != null && state.droppedRowsCount > 0 && (
+                <div className="flex items-center gap-2 rounded-md bg-yellow-50
+                                border border-yellow-200 px-3 py-2 text-xs text-yellow-800">
+                  <AlertTriangle className="h-4 w-4 shrink-0 text-yellow-500" />
+                  <span>
+                    {state.droppedRowsCount} transaction
+                    {state.droppedRowsCount > 1 ? "s were" : " was"} skipped —
+                    check Upload History for details.
                   </span>
                 </div>
               )}

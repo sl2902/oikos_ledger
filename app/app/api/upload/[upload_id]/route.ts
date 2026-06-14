@@ -29,6 +29,9 @@ export async function GET(
       closing_balance: upload.closing_balance,
       balance_verified: upload.balance_verified,
       balance_discrepancy: upload.balance_discrepancy,
+      dropped_rows_count: upload.dropped_rows
+      ? (upload.dropped_rows as any[]).length
+      : 0,
     },
     {
       headers: {
