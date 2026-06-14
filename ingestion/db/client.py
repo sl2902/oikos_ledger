@@ -91,14 +91,15 @@ def write_transactions(
     user_id: uuid.UUID,
     upload_id: uuid.UUID,
     currency: str,
-) -> tuple[int, int]:
+) -> tuple[int, int, list[dict]]:
     """Write normalized transactions to Aurora using INSERT … ON CONFLICT DO NOTHING.
 
     Handles both unique constraints:
     - (user_id, account_id, reference_number) WHERE reference_number IS NOT NULL
     - (user_id, account_id, transaction_date, amount, normalized_merchant)
 
-    Returns (inserted_count, skipped_count).
+    Returns (inserted_count, skipped_count, skipped_details) where skipped_details
+    contains rows dropped due to unique constraint conflicts.
     """
     log.info("Writing transactions", extra={
         "count": len(transactions),
@@ -108,6 +109,7 @@ def write_transactions(
 
     inserted = 0
     skipped = 0
+    skipped_details: list[dict] = []
 
     for txn, embedding in zip(transactions, embeddings):
         values = {
@@ -138,6 +140,19 @@ def write_transactions(
             inserted += 1
         else:
             skipped += 1
+            skipped_details.append({
+                "row_number": txn.get("row_number"),
+                "date": str(txn["transaction_date"]),
+                "narration": txn["raw_description"][:100],
+                "debit": str(txn["amount"])
+                    if txn["transaction_type"] == "debit"
+                    else "0.00",
+                "credit": str(txn["amount"])
+                    if txn["transaction_type"] == "credit"
+                    else "0.00",
+                "reference": txn.get("reference_number") or "",
+                "reason": "duplicate_transaction",
+            })
         log.debug("Transaction write result", extra={
             "merchant": txn["normalized_merchant"][:40],
             "date": str(txn["transaction_date"]),
@@ -151,4 +166,4 @@ def write_transactions(
         "upload_id": str(upload_id),
     })
 
-    return inserted, skipped
+    return inserted, skipped, skipped_details

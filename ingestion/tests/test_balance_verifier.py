@@ -1,3 +1,4 @@
+import uuid
 from datetime import date
 from decimal import Decimal
 
@@ -92,3 +93,41 @@ def test_sorts_by_date():
     result = verify_balance(rows)
     assert result.is_valid is True
     assert result.opening_balance == Decimal("1122552.71")
+
+
+def test_write_transactions_returns_skipped_details():
+    """write_transactions returns details of skipped duplicates."""
+    from unittest.mock import MagicMock
+
+    from ingestion.db.client import write_transactions
+
+    mock_result = MagicMock()
+    mock_result.rowcount = 0
+
+    mock_session = MagicMock()
+    mock_session.execute.return_value = mock_result
+
+    txn = {
+        "transaction_date": date(2022, 6, 22),
+        "raw_description": "INB/896427864/PAYU.IN/",
+        "normalized_merchant": "Payu.In",
+        "amount": Decimal("5000.00"),
+        "transaction_type": "debit",
+        "reference_number": None,
+        "closing_balance": Decimal("696207.01"),
+        "category": "Transfer",
+        "subcategory": None,
+        "row_number": 13,
+    }
+
+    inserted, skipped, details = write_transactions(
+        mock_session, [txn], [[0.0] * 1536],
+        uuid.uuid4(), uuid.uuid4(), uuid.uuid4(), "INR",
+    )
+
+    assert inserted == 0
+    assert skipped == 1
+    assert len(details) == 1
+    assert details[0]["reason"] == "duplicate_transaction"
+    assert details[0]["row_number"] == 13
+    assert details[0]["date"] == "2022-06-22"

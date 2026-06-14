@@ -90,7 +90,23 @@ async def _run_pipeline(
 
             # 5. Parse
             stage = "parse"
-            parsed_rows, skipped_rows, parser = parser_module.parse_csv(bank_name, file_content)
+            try:
+                parsed_rows, skipped_rows, parser = parser_module.parse_csv(bank_name, file_content)
+            except ValueError as exc:
+                user_message = (
+                    f"This file doesn't appear to be a valid {bank_name} statement. "
+                    f"Please download your statement from {bank_name} NetBanking "
+                    f"under Statements → Download → CSV and try again."
+                )
+                log.error("Parser validation failed: %s", str(exc))
+                update_upload_status(
+                    session,
+                    upload_id,
+                    status="failed",
+                    error_message=user_message,
+                )
+                return {"statusCode": 400, "body": user_message}
+            
             log.info("CSV parsed", extra={
                 "upload_id": str(upload_id),
                 "bank_name": bank_name,
@@ -166,17 +182,27 @@ async def _run_pipeline(
 
             # 8. Write (idempotent)
             stage = "write"
-            inserted, skipped = write_transactions(
+            inserted, skipped_count, write_skipped = write_transactions(
                 session, normalized, embeddings, account_id, user_id, upload_id, currency
             )
             log.info("Transactions written", extra={
                 "upload_id": str(upload_id),
                 "inserted": inserted,
-                "skipped": skipped,
-                "total_attempted": inserted + skipped,
+                "skipped": skipped_count,
+                "write_skipped_details": len(write_skipped),
+                "total_attempted": inserted + skipped_count,
             })
 
-            # 9. Complete
+            if write_skipped:
+                log.warning(
+                    "Transactions skipped due to duplicates: %d",
+                    len(write_skipped),
+                )
+
+            # Merge parse-level and write-level skipped rows
+            all_skipped = skipped_rows + write_skipped
+
+            # 9. Complete — single update with full state and all skipped rows
             stage = "complete"
             update_upload_status(
                 session,
@@ -184,12 +210,18 @@ async def _run_pipeline(
                 status="complete",
                 row_count=inserted,
                 completed_at=datetime.now(timezone.utc),
+                opening_balance=verification.opening_balance,
+                closing_balance=verification.closing_balance,
+                balance_verified=verification.is_valid,
+                balance_discrepancy=verification.discrepancy
+                    if not verification.is_valid else None,
+                dropped_rows=all_skipped if all_skipped else None,
             )
             log.info("Pipeline complete", extra={
                 "upload_id": str(upload_id),
                 "status": "complete",
                 "inserted": inserted,
-                "skipped": skipped,
+                "skipped": skipped_count,
                 "balance_verified": verification.is_valid,
             })
 
