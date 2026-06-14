@@ -10,16 +10,27 @@ interface Props {
   month: string
   transactions: EffectiveTransaction[]
   showHeader?: boolean
-  mutateTransactions: () => void
-  openingBalance?: string | null
-  closingBalance?: string | null
+  mutateTransactions?: () => void
   balanceVerified?: boolean | null
   monthTotalDebits?: string | null
   monthTotalCredits?: string | null
 }
 
-export function TransactionGroup({ month, transactions, showHeader, mutateTransactions, openingBalance, closingBalance, balanceVerified, monthTotalDebits, monthTotalCredits }: Props) {
+export function TransactionGroup({ month, transactions, showHeader, mutateTransactions, balanceVerified, monthTotalDebits, monthTotalCredits }: Props) {
   const [amendingTransaction, setAmendingTransaction] = useState<EffectiveTransaction | null>(null)
+
+  // Transactions sorted date DESC, row_number DESC — first = most recent in group
+  const closingBalance = transactions[0]?.closing_balance ?? null
+
+  const lastTxn = transactions[transactions.length - 1]
+  const openingBalance = (() => {
+    if (!lastTxn?.closing_balance) return null
+    const closing = Number(lastTxn.closing_balance)
+    const amount = Number(lastTxn.amount)
+    return lastTxn.transaction_type === "debit"
+      ? closing + amount
+      : closing - amount
+  })()
 
   const currencySymbol = transactions[0]
     ? (SUPPORTED_CURRENCIES.find((c) => c.code === transactions[0].currency)?.symbol ?? "₹")
@@ -51,7 +62,8 @@ export function TransactionGroup({ month, transactions, showHeader, mutateTransa
             <span className="text-muted-foreground">
               Opening{" "}
               <span className="font-medium text-slate-700">
-                {currencySymbol}{Number(openingBalance).toLocaleString("en-IN", {
+                {currencySymbol}
+                {openingBalance.toLocaleString("en-IN", {
                   minimumFractionDigits: 2,
                   maximumFractionDigits: 2,
                 })}

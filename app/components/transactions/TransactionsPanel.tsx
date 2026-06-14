@@ -59,8 +59,6 @@ export function TransactionsPanel() {
     isLoading,
     isError,
     mutate: mutateTransactions,
-    openingBalance,
-    closingBalance,
     balanceVerified,
     balanceDiscrepancy: _balanceDiscrepancy,
     monthTotalDebits,
@@ -185,8 +183,6 @@ export function TransactionsPanel() {
               transactions={group.transactions}
               showHeader={index === 0}
               mutateTransactions={mutateTransactions}
-              openingBalance={index === grouped.length - 1 ? openingBalance : null}
-              closingBalance={index === 0 ? closingBalance : null}
               balanceVerified={balanceVerified}
               monthTotalDebits={monthTotalDebits}
               monthTotalCredits={monthTotalCredits}

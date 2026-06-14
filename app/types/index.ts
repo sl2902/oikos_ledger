@@ -21,6 +21,7 @@ export type TransactionAmendment = InferSelectModel<typeof transaction_amendment
 export interface EffectiveTransaction extends Transaction {
   payment_method: string
   is_amended: boolean
+  closing_balance: string | null
 }
 
 export interface UploadStatusResponse {

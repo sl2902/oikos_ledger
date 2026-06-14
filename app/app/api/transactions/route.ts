@@ -118,21 +118,6 @@ export async function GET(request: Request) {
     .filter((t) => t.transaction_type === "credit")
     .reduce((sum, t) => sum + Number(t.amount), 0)
 
-  // Opening balance derived from oldest transaction (last in date-desc list)
-  const oldestTxn = allRows[allRows.length - 1]
-  let openingBalance: string | null = null
-  if (oldestTxn?.closing_balance != null) {
-    const closing = Number(oldestTxn.closing_balance)
-    const amount = Number(oldestTxn.amount)
-    const opening = oldestTxn.transaction_type === "debit"
-      ? closing + amount
-      : closing - amount
-    openingBalance = opening.toFixed(2)
-  }
-
-  // Closing balance from most recent transaction (first in date-desc list)
-  const closingBalance = allRows.length > 0 ? allRows[0].closing_balance : null
-
   const latestUpload = await db
     .select({
       balance_verified: uploads.balance_verified,
@@ -154,8 +139,6 @@ export async function GET(request: Request) {
     page,
     limit,
     total_pages,
-    opening_balance: openingBalance,
-    closing_balance: closingBalance,
     balance_verified: latestUpload?.balance_verified ?? null,
     balance_discrepancy: latestUpload?.balance_discrepancy ?? null,
     month_total_debits: totalDebits.toFixed(2),

@@ -21,8 +21,6 @@ interface TransactionsResponse {
   page: number
   limit: number
   total_pages: number
-  opening_balance: string | null
-  closing_balance: string | null
   balance_verified: boolean | null
   balance_discrepancy: string | null
   month_total_debits: string | null
@@ -63,8 +61,6 @@ export function useTransactions(accountId: string | null, filters?: TransactionF
     isLoading,
     isError: !!error,
     mutate,
-    openingBalance: data?.opening_balance ?? null,
-    closingBalance: data?.closing_balance ?? null,
     balanceVerified: data?.balance_verified ?? null,
     balanceDiscrepancy: data?.balance_discrepancy ?? null,
     monthTotalDebits: data?.month_total_debits ?? null,
