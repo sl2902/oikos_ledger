@@ -1,18 +1,20 @@
 "use client"
 
 import { useState } from "react"
-import { History } from "lucide-react"
+import { History, Trash2 } from "lucide-react"
 import { mutate as globalMutate } from "swr"
 import { useAccounts } from "@/components/accounts/AccountsContext"
 import { AddBankAccountModal } from "@/components/bank_accounts/AddBankAccountModal"
 import { BankLogo } from "@/components/bank_accounts/BankLogo"
 import { UploadHistoryModal } from "@/components/uploads/UploadHistoryModal"
+import { DeleteAccountModal } from "@/components/accounts/DeleteAccountModal"
 import { getBankDomain } from "@/lib/constants/banks"
 import type { SupportedBankName } from "@/lib/constants/banks"
 
 export function AccountsSidebar() {
   const { accounts, isLoading, selectedAccountId, setSelectedAccountId, mutate } = useAccounts()
   const [historyAccountId, setHistoryAccountId] = useState<string | null>(null)
+  const [deletingAccountId, setDeletingAccountId] = useState<string | null>(null)
 
   const historyAccount = historyAccountId
     ? (accounts.find((a) => a.id === historyAccountId) ?? null)
@@ -42,7 +44,7 @@ export function AccountsSidebar() {
               return (
                 <li key={account.id}>
                   <div
-                    className={`flex items-center transition-colors ${
+                    className={`group flex items-center transition-colors ${
                       isSelected ? "bg-accent" : "hover:bg-accent"
                     }`}
                   >
@@ -68,16 +70,30 @@ export function AccountsSidebar() {
                         <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
                       )}
                     </button>
-                    {isSelected && (
+                    <div className="mr-2 flex items-center gap-1 opacity-0 group-hover:opacity-100">
                       <button
                         type="button"
-                        onClick={() => setHistoryAccountId(account.id)}
-                        className="mr-2 shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setHistoryAccountId(account.id)
+                        }}
+                        className="rounded p-1 text-muted-foreground transition-colors hover:bg-background hover:text-foreground"
                         title="Upload history"
                       >
                         <History className="h-3.5 w-3.5" />
                       </button>
-                    )}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setDeletingAccountId(account.id)
+                        }}
+                        className="rounded p-1 text-muted-foreground transition-colors hover:bg-background hover:text-destructive"
+                        title="Delete account"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                   </div>
                 </li>
               )
@@ -107,6 +123,29 @@ export function AccountsSidebar() {
             setHistoryAccountId(null)
           }}
           onClose={() => setHistoryAccountId(null)}
+        />
+      )}
+
+      {deletingAccountId && (
+        <DeleteAccountModal
+          accountId={deletingAccountId}
+          onDelete={() => {
+            if (selectedAccountId === deletingAccountId) {
+              const remaining = accounts.filter((a) => a.id !== deletingAccountId)
+              if (remaining.length > 0) {
+                setSelectedAccountId(remaining[0].id)
+              } else {
+                setSelectedAccountId(null)
+              }
+            }
+            setDeletingAccountId(null)
+            mutate()
+            globalMutate(
+              (key: unknown) =>
+                typeof key === "string" && key.startsWith("/api/transactions"),
+            )
+          }}
+          onClose={() => setDeletingAccountId(null)}
         />
       )}
     </aside>
