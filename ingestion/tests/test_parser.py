@@ -13,6 +13,7 @@ from ingestion.pipeline.parser import (
 )
 from ingestion.pipeline.parsers.axis import AxisParser
 from ingestion.pipeline.parsers.hdfc import HDFCParser
+from ingestion.pipeline.parsers.icici import ICICIParser
 
 # Real-format HDFC CSV fixture (2-digit year, trailing spaces on dates)
 HDFC_SAMPLE = """Date     ,Narration,Value Dat,Debit Amount,Credit Amount,Chq/Ref Number,Closing Balance
@@ -458,3 +459,125 @@ def test_axis_closing_balance_parsed():
     """Closing balance extracted correctly from BAL column."""
     rows, skipped = AxisParser().parse_csv(AXIS_SAMPLE)
     assert rows[0]["closing_balance"] == Decimal("726713.83")
+
+
+# ── ICICI Bank parser tests ───────────────────────────────────────────────────
+
+ICICI_SAMPLE = """S No.,Value Date,Transaction Date,Cheque Number,Transaction Remarks,"Withdrawal Amount
+(INR )","Deposit Amount
+(INR )",Balance (INR )
+1,03/10/2023,03/10/2023,-,AS PER SHEET,0.0,2500.00,2885.84
+2,07/10/2023,07/10/2023,-,"NFS/CASH
+WDL/328009020022/06094066/ALWAR /07-10",2500.00,0.0,385.84
+3,09/10/2023,09/10/2023,-,TRANSFER FROM SALARY,0.0,25000.00,25385.84
+4,09/10/2023,09/10/2023,-,"VPS/SUVIDHA
+STO/202310100031/328219139980/ALWAR",240.00,0.0,5145.84
+5,09/10/2023,09/10/2023,-,"MMT/IMPS/328219701406/PENNYDROP/NorthernAr/Axis Ba",0.0,1.00,5146.84
+"""
+
+
+def test_icici_parser_handles_multiline_headers():
+    """Column headers with newlines parsed correctly."""
+    rows, skipped = ICICIParser().parse_csv(ICICI_SAMPLE)
+    assert len(rows) > 0
+
+
+def test_icici_parser_handles_multiline_narrations():
+    """Narrations with embedded newlines parsed correctly."""
+    rows, skipped = ICICIParser().parse_csv(ICICI_SAMPLE)
+    nfs_rows = [r for r in rows if "NFS" in r["raw_description"]]
+    assert len(nfs_rows) == 1
+    assert nfs_rows[0]["transaction_type"] == "debit"
+    assert nfs_rows[0]["amount"] == Decimal("2500.00")
+
+
+def test_icici_parser_date_format():
+    """ICICI DD/MM/YYYY date format parsed correctly."""
+    rows, skipped = ICICIParser().parse_csv(ICICI_SAMPLE)
+    assert rows[0]["transaction_date"] == date(2023, 10, 3)
+
+
+def test_icici_parser_closing_balance():
+    """Closing balance extracted correctly."""
+    rows, skipped = ICICIParser().parse_csv(ICICI_SAMPLE)
+    assert rows[0]["closing_balance"] == Decimal("2885.84")
+
+
+def test_icici_parser_dash_reference_is_null():
+    """Reference number '-' treated as null."""
+    rows, skipped = ICICIParser().parse_csv(ICICI_SAMPLE)
+    assert all(r["reference_number"] is None for r in rows)
+
+
+def test_icici_normalize_nfs_atm():
+    """NFS/CASH WDL pattern returns ATM/ATM Withdrawal."""
+    parser = ICICIParser()
+    result = parser.normalize_narration(
+        "NFS/CASH WDL/328009020022/06094066/ALWAR /07-10"
+    )
+    assert result is not None
+    assert result["payment_method"] == "ATM"
+    assert result["category"] == "ATM Withdrawal"
+
+
+def test_icici_normalize_vps_pos():
+    """VPS pattern returns POS/Shopping."""
+    parser = ICICIParser()
+    result = parser.normalize_narration(
+        "VPS/SUVIDHA STO/202310100031/328219139980/ALWAR"
+    )
+    assert result is not None
+    assert result["payment_method"] == "POS"
+    assert result["category"] == "Shopping"
+
+
+def test_icici_normalize_mmt_imps():
+    """MMT/IMPS pattern returns IMPS/Transfer."""
+    parser = ICICIParser()
+    result = parser.normalize_narration(
+        "MMT/IMPS/328219701406/PENNYDROP/NorthernAr/Axis Ba"
+    )
+    assert result is not None
+    assert result["payment_method"] == "IMPS"
+    assert result["category"] == "Transfer"
+
+
+def test_icici_normalize_salary():
+    """TRANSFER FROM SALARY returns Salary category."""
+    parser = ICICIParser()
+    result = parser.normalize_narration("TRANSFER FROM SALARY")
+    assert result is not None
+    assert result["category"] == "Salary"
+    assert result["payment_method"] == "Salary"
+    assert result["needs_llm"] is False
+
+
+def test_icici_normalize_neft_code():
+    """NEFT code returns NEFT payment method."""
+    parser = ICICIParser()
+    result = parser.normalize_narration(
+        "NEFT/SOME BANK/SOME MERCHANT/REF123"
+    )
+    assert result is not None
+    assert result["payment_method"] == "NEFT"
+
+
+def test_icici_zero_amount_skipped():
+    """Rows with zero debit and credit skipped."""
+    csv_data = """S No.,Value Date,Transaction Date,Cheque Number,Transaction Remarks,"Withdrawal Amount
+(INR )","Deposit Amount
+(INR )",Balance (INR )
+1,03/10/2023,03/10/2023,-,OPENING BALANCE,0.0,0.0,2885.84
+"""
+    rows, skipped = ICICIParser().parse_csv(csv_data)
+    assert len(rows) == 0
+    assert len(skipped) == 1
+    assert skipped[0]["reason"] == "zero_amount"
+
+
+def test_icici_wrong_format_raises_value_error():
+    """HDFC format uploaded to ICICI parser raises ValueError."""
+    hdfc_csv = """Date,Narration,Value Dat,Debit Amount,Credit Amount,Chq/Ref Number,Closing Balance
+01/05/26,UPI-SWIGGY,01/05/26,610.00,0.00,REF001,900.00"""
+    with pytest.raises(ValueError, match="required columns not found"):
+        ICICIParser().parse_csv(hdfc_csv)
