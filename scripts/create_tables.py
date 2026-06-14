@@ -26,10 +26,17 @@ def main() -> None:
         """))
 
         # Unique constraint 2: composite for transactions without reference numbers
+        # closing_balance added as tiebreaker for same-merchant sequential transactions
         session.exec(text("""
-            CREATE UNIQUE INDEX IF NOT EXISTS uq_transactions_composite
-            ON transactions (user_id, account_id, transaction_date,
-                             amount, normalized_merchant, transaction_type)
+            DROP INDEX IF EXISTS uq_transactions_composite
+        """))
+
+        session.exec(text("""
+            CREATE UNIQUE INDEX uq_transactions_composite
+            ON transactions (
+                user_id, account_id, transaction_date,
+                amount, normalized_merchant, closing_balance
+            )
         """))
 
         session.commit()

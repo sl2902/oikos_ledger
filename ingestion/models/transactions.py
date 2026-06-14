@@ -101,7 +101,8 @@ class Transaction(SQLModel, table=True):
         ),
         Index(
             "uq_transactions_composite",
-            "user_id", "account_id", "transaction_date", "amount", "normalized_merchant",
+            "user_id", "account_id", "transaction_date",
+            "amount", "normalized_merchant", "closing_balance",
             unique=True,
         ),
     )
