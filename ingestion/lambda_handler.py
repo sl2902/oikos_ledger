@@ -239,7 +239,7 @@ async def _run_pipeline(
         "parsed": len(parsed_rows),
         "skipped_parsing": len(skipped_rows),
         "inserted": inserted,
-        "skipped_db": skipped,
+        "skipped_db": skipped_count,
     }
 
 

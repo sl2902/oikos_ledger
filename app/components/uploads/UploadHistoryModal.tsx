@@ -233,6 +233,11 @@ export function UploadHistoryModal({ accountId, bankName, onDelete, onClose }: P
                         <td className="py-2.5 pr-4">
                           <div className="flex flex-col gap-1">
                             <StatusBadge status={upload.status} />
+                            {upload.status === "failed" && upload.error_message && (
+                              <p className="text-xs text-red-600 dark:text-red-400 max-w-[200px]">
+                                {upload.error_message}
+                              </p>
+                            )}
                             {hasDropped && (
                               <button
                                 type="button"

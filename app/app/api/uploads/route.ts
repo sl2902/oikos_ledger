@@ -28,6 +28,7 @@ export async function GET(request: Request) {
       opening_balance: uploads.opening_balance,
       closing_balance: uploads.closing_balance,
       dropped_rows: uploads.dropped_rows,
+      error_message: uploads.error_message,
       uploaded_at: uploads.uploaded_at,
       completed_at: uploads.completed_at,
     })

@@ -13,6 +13,7 @@ export interface Upload {
   closing_balance: string | null
   dropped_rows: DroppedRow[] | null
   uploaded_at: string
+  error_message: string | null
   completed_at: string | null
 }
 

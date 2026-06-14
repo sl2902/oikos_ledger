@@ -68,7 +68,7 @@ class HDFCParser(BaseCSVParser):
         """
         lines = file_content.strip().splitlines()
         if not lines:
-            return [], []
+            raise ValueError(f"{self.bank_name} parser: empty file content")
 
         # Find header line
         header_line = next((l for l in lines if l.strip()), None)
