@@ -2,8 +2,8 @@
 
 import sys
 
-from sqlalchemy import create_engine, inspect
-from sqlmodel import SQLModel
+from sqlalchemy import create_engine, inspect, text
+from sqlmodel import Session, SQLModel
 
 from ingestion.config import settings
 
@@ -16,6 +16,23 @@ def main() -> None:
 
     engine = create_engine(settings.database_url_direct)
     SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        # Unique constraint 1: reference number (partial — only when not null)
+        session.exec(text("""
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_transactions_ref
+            ON transactions (user_id, account_id, reference_number)
+            WHERE reference_number IS NOT NULL
+        """))
+
+        # Unique constraint 2: composite for transactions without reference numbers
+        session.exec(text("""
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_transactions_composite
+            ON transactions (user_id, account_id, transaction_date,
+                             amount, normalized_merchant, transaction_type)
+        """))
+
+        session.commit()
 
     inspector = inspect(engine)
     tables = sorted(inspector.get_table_names())

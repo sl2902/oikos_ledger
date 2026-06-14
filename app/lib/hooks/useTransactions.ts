@@ -12,6 +12,7 @@ export interface TransactionFilters {
   amount_max?: number
   month?: string
   page?: number
+  transaction_type?: "debit" | "credit" | "all"
 }
 
 interface TransactionsResponse {
@@ -39,6 +40,9 @@ export function useTransactions(accountId: string | null, filters?: TransactionF
   if (filters?.amount_min != null) params.set("amount_min", String(filters.amount_min))
   if (filters?.amount_max != null) params.set("amount_max", String(filters.amount_max))
   if (filters?.page != null) params.set("page", String(filters.page))
+  if (filters?.transaction_type && filters.transaction_type !== "all") {
+    params.set("transaction_type", filters.transaction_type)
+  }
   // payment_method has no DB column — applied client-side in TransactionsPanel
 
   const { data, error, isLoading, mutate } = useSWR<TransactionsResponse>(

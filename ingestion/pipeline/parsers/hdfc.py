@@ -1,4 +1,8 @@
-from .base import BaseCSVParser, ParsedRow
+import logging
+
+from .base import BaseCSVParser, ParsedRow, SkippedRow
+
+log = logging.getLogger(__name__)
 
 
 class HDFCParser(BaseCSVParser):
@@ -21,21 +25,22 @@ class HDFCParser(BaseCSVParser):
             "balance": ["closing balance", "balance"],
             "value_date": ["value dat", "value date"],
         }
-    
-    def parse_csv(self, file_content: str) -> list[ParsedRow]:
+
+    def parse_csv(self, file_content: str) -> tuple[list[ParsedRow], list[SkippedRow]]:
         """Override base parse_csv to handle HDFC narrations with embedded commas.
-        
+
         HDFC exports narrations without quoting even when they contain commas,
         causing column overflow. Re-join split narration fields before parsing.
+        Returns (parsed_rows, skipped_rows).
         """
         lines = file_content.strip().splitlines()
         if not lines:
-            return []
+            return [], []
 
         # Find header line
         header_line = next((l for l in lines if l.strip()), None)
         if not header_line:
-            return []
+            return [], []
 
         raw_headers = [h.strip() for h in header_line.split(",")]
         expected_cols = len(raw_headers)
@@ -47,6 +52,8 @@ class HDFCParser(BaseCSVParser):
             )
 
         rows: list[ParsedRow] = []
+        skipped: list[SkippedRow] = []
+
         for i, line in enumerate(lines[1:]):  # skip header
             if not line.strip():
                 continue
@@ -61,30 +68,51 @@ class HDFCParser(BaseCSVParser):
                 parts = [date, narration] + tail
 
             if len(parts) != expected_cols:
-                continue  # skip malformed rows
+                log.warning(
+                    "Skipping malformed row %d: expected %d cols, got %d — %s",
+                    i, expected_cols, len(parts), line[:80]
+                )
+                skipped.append(SkippedRow(
+                    row_number=i,
+                    date=parts[0].strip() if parts else "",
+                    narration=parts[1].strip() if len(parts) > 1 else "",
+                    debit="",
+                    credit="",
+                    reference="",
+                    reason="malformed_row",
+                ))
+                continue
 
             row = dict(zip(raw_headers, [p.strip() for p in parts]))
-            parsed = self._parse_row(row, header_map)
-            if parsed is not None:
-                parsed["row_number"] = i
-                rows.append(parsed)
+            parsed, skip = self._parse_row(row, header_map, i)
+            if parsed is None:
+                log.debug(
+                    "Row %d skipped by _parse_row: %s",
+                    i, line[:80]
+                )
+                if skip is not None:
+                    skipped.append(skip)
+                continue
 
-        return rows
-    
+            parsed["row_number"] = i
+            rows.append(parsed)
+
+        return rows, skipped
+
     # logic carried into parse_csv()
     def _fix_split_narration(self, row: list[str]) -> list[str]:
         """Re-join narration fields split by embedded commas.
-        
+
         HDFC exports narrations without quoting even when they contain
         commas. Detect overflow by checking if column count exceeds 7
         and re-join the middle fields as narration.
-        
+
         Expected columns: Date, Narration, Value Date, Debit, Credit, Ref, Balance
         """
         EXPECTED_COLS = 7
         if len(row) <= EXPECTED_COLS:
             return row
-        
+
         # Extra columns = narration was split
         # Last 5 columns are always: Value Date, Debit, Credit, Ref, Balance
         date = row[0]

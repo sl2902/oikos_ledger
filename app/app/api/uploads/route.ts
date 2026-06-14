@@ -27,6 +27,7 @@ export async function GET(request: Request) {
       balance_discrepancy: uploads.balance_discrepancy,
       opening_balance: uploads.opening_balance,
       closing_balance: uploads.closing_balance,
+      dropped_rows: uploads.dropped_rows,
       uploaded_at: uploads.uploaded_at,
       completed_at: uploads.completed_at,
     })

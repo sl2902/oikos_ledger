@@ -56,8 +56,9 @@ def update_upload_status(
     closing_balance: Decimal | None = None,
     balance_verified: bool | None = None,
     balance_discrepancy: Decimal | None = None,
+    dropped_rows: list | None = None,
 ) -> None:
-    """Update upload status and optionally row_count / error_message / completed_at / balance fields."""
+    """Update upload status and optionally row_count / error_message / completed_at / balance / dropped_rows."""
     upload = session.get(Upload, upload_id)
     if upload is None:
         return
@@ -76,6 +77,8 @@ def update_upload_status(
         upload.balance_verified = balance_verified
     if balance_discrepancy is not None:
         upload.balance_discrepancy = balance_discrepancy
+    if dropped_rows is not None:
+        upload.dropped_rows = dropped_rows
     session.add(upload)
     session.commit()
 

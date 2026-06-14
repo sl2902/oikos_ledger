@@ -90,14 +90,27 @@ async def _run_pipeline(
 
             # 5. Parse
             stage = "parse"
-            parsed_rows = parser_module.parse_csv(bank_name, file_content)
+            parsed_rows, skipped_rows = parser_module.parse_csv(bank_name, file_content)
             log.info("CSV parsed", extra={
                 "upload_id": str(upload_id),
                 "bank_name": bank_name,
-                "row_count": len(parsed_rows),
+                "parsed_rows": len(parsed_rows),
+                "skipped_rows": len(skipped_rows),
                 "sample_narrations": [r["raw_description"][:50] for r in parsed_rows[:3]],
             })
-            update_upload_status(session, upload_id, status="processing", row_count=len(parsed_rows))
+            if skipped_rows:
+                log.warning(
+                    "Rows skipped during parsing: %d",
+                    len(skipped_rows),
+                    extra={"skipped": [s["reason"] for s in skipped_rows]},
+                )
+            update_upload_status(
+                session,
+                upload_id,
+                status="processing",
+                row_count=len(parsed_rows),
+                dropped_rows=[dict(s) for s in skipped_rows] if skipped_rows else None,
+            )
             session.flush()
 
             # 5b. Balance verification
@@ -192,8 +205,9 @@ async def _run_pipeline(
         "status": "complete",
         "upload_id": str(upload_id),
         "parsed": len(parsed_rows),
+        "skipped_parsing": len(skipped_rows),
         "inserted": inserted,
-        "skipped": skipped,
+        "skipped_db": skipped,
     }
 
 

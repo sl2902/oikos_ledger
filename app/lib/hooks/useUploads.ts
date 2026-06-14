@@ -1,5 +1,6 @@
 import useSWR from "swr"
 import { fetcher } from "@/lib/fetcher"
+import type { DroppedRow } from "@/types"
 
 export interface Upload {
   id: string
@@ -10,6 +11,7 @@ export interface Upload {
   balance_discrepancy: string | null
   opening_balance: string | null
   closing_balance: string | null
+  dropped_rows: DroppedRow[] | null
   uploaded_at: string
   completed_at: string | null
 }

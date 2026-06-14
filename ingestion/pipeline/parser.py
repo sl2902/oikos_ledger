@@ -6,7 +6,7 @@ import logging
 
 from .constants import BANK_HEADER_SIGNATURES
 from .parsers.axis import AxisParser
-from .parsers.base import BaseCSVParser, ParsedRow
+from .parsers.base import BaseCSVParser, ParsedRow, SkippedRow
 from .parsers.hdfc import HDFCParser
 from .parsers.icici import ICICIParser
 from .parsers.sbi import SBIParser
@@ -56,8 +56,8 @@ def detect_bank_from_content(file_content: str) -> str | None:
     return None
 
 
-def parse_csv(bank_name: str, file_content: str) -> list[ParsedRow]:
-    """Route CSV content to the correct parser.
+def parse_csv(bank_name: str, file_content: str) -> tuple[list[ParsedRow], list[SkippedRow]]:
+    """Route CSV content to the correct parser. Returns (parsed_rows, skipped_rows).
 
     Steps:
     1. Look up primary parser via bank_name.
@@ -76,9 +76,9 @@ def parse_csv(bank_name: str, file_content: str) -> list[ParsedRow]:
             "parser": parser.__class__.__name__,
         })
         try:
-            rows = parser.parse_csv(file_content)
-            _log_parse_complete(bank_name, file_content, rows)
-            return rows
+            rows, skipped = parser.parse_csv(file_content)
+            _log_parse_complete(bank_name, rows, skipped)
+            return rows, skipped
         except ValueError as e:
             log.warning("Primary parser header mismatch", extra={
                 "expected_bank": bank_name,
@@ -103,9 +103,9 @@ def parse_csv(bank_name: str, file_content: str) -> list[ParsedRow]:
         })
 
     if detected_bank:
-        rows = get_parser(detected_bank).parse_csv(file_content)
-        _log_parse_complete(detected_bank, file_content, rows)
-        return rows
+        rows, skipped = get_parser(detected_bank).parse_csv(file_content)
+        _log_parse_complete(detected_bank, rows, skipped)
+        return rows, skipped
 
     raise UnsupportedBankError(
         f"Could not find a parser for '{bank_name}' and header detection found no match."
@@ -121,15 +121,12 @@ def _csv_headers(file_content: str) -> list[str]:
         return []
 
 
-def _log_parse_complete(bank_name: str, file_content: str, rows: list[ParsedRow]) -> None:
-    try:
-        reader = csv.DictReader(io.StringIO(file_content.strip()))
-        total_rows = sum(1 for _ in reader)
-    except Exception:
-        total_rows = len(rows)
+def _log_parse_complete(
+    bank_name: str, rows: list[ParsedRow], skipped: list[SkippedRow]
+) -> None:
     log.info("Parse complete", extra={
         "bank_name": bank_name,
-        "total_rows": total_rows,
         "parsed_rows": len(rows),
-        "skipped_rows": total_rows - len(rows),
+        "skipped_rows": len(skipped),
+        "skip_reasons": [s["reason"] for s in skipped] if skipped else [],
     })

@@ -8,7 +8,7 @@ from typing import Optional
 from decimal import Decimal
 
 import sqlalchemy as sa
-from sqlalchemy import Column, Numeric, UniqueConstraint, text
+from sqlalchemy import JSON, Column, Numeric, UniqueConstraint, text
 from sqlmodel import Field, SQLModel
 
 
@@ -123,4 +123,8 @@ class Upload(SQLModel, table=True):
     balance_discrepancy: Optional[Decimal] = Field(
         default=None,
         sa_column=Column(Numeric(15, 2)),
+    )
+    dropped_rows: Optional[list] = Field(
+        default=None,
+        sa_column=Column(JSON, nullable=True),
     )

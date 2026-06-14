@@ -7,6 +7,7 @@ import {
   customType,
   date,
   integer,
+  json,
   jsonb,
   numeric,
   pgEnum,
@@ -128,6 +129,7 @@ export const uploads = pgTable("uploads", {
   closing_balance: numeric("closing_balance", { precision: 15, scale: 2 }),
   balance_verified: boolean("balance_verified"),
   balance_discrepancy: numeric("balance_discrepancy", { precision: 15, scale: 2 }),
+  dropped_rows: json("dropped_rows").$type<import("@/types").DroppedRow[]>(),
 }, (table) => ({
   uqUserAccountHash: uniqueIndex("uq_uploads_user_account_hash").on(table.user_id, table.account_id, table.file_hash),
 }));

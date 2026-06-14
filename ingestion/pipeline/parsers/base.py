@@ -4,10 +4,12 @@
 
 import csv
 import io
+import logging
+import re
 from abc import ABC, abstractmethod
 from datetime import date
 from decimal import Decimal, InvalidOperation
-from typing import TypedDict
+from typing import Literal, TypedDict
 
 from ..constants import AMOUNT_STRIP_CHARS, DATE_FORMATS
 
@@ -15,6 +17,8 @@ try:
     from datetime import datetime
 except ImportError:
     pass
+
+log = logging.getLogger(__name__)
 
 
 class ParsedRow(TypedDict):
@@ -25,6 +29,21 @@ class ParsedRow(TypedDict):
     reference_number: str | None
     closing_balance: Decimal | None
     row_number: int  # original CSV row position — preserved for intra-day ordering
+
+
+class SkippedRow(TypedDict):
+    row_number: int
+    date: str
+    narration: str
+    debit: str
+    credit: str
+    reference: str
+    reason: Literal[
+        "zero_amount",
+        "invalid_date",
+        "missing_narration",
+        "malformed_row",
+    ]
 
 
 class BaseCSVParser(ABC):
@@ -48,11 +67,11 @@ class BaseCSVParser(ABC):
         """
         ...
 
-    def parse_csv(self, file_content: str) -> list[ParsedRow]:
-        """Parse CSV content into a list of ParsedRow dicts."""
+    def parse_csv(self, file_content: str) -> tuple[list[ParsedRow], list[SkippedRow]]:
+        """Parse CSV content. Returns (parsed_rows, skipped_rows)."""
         reader = csv.DictReader(io.StringIO(file_content.strip()))
         if reader.fieldnames is None:
-            return []
+            return [], []
 
         raw_headers = list(reader.fieldnames)
         header_map = self.detect_headers(raw_headers)
@@ -63,12 +82,17 @@ class BaseCSVParser(ABC):
             )
 
         rows: list[ParsedRow] = []
+        skipped: list[SkippedRow] = []
+
         for i, row in enumerate(reader):
-            parsed = self._parse_row(row, header_map)
+            parsed, skip = self._parse_row(row, header_map, i)
             if parsed is not None:
                 parsed["row_number"] = i
                 rows.append(parsed)
-        return rows
+            elif skip is not None:
+                skipped.append(skip)
+
+        return rows, skipped
 
     def detect_headers(self, headers: list[str]) -> dict[str, str]:
         """Map CSV headers to canonical field names via substring matching."""
@@ -131,17 +155,39 @@ class BaseCSVParser(ABC):
         self,
         row: dict[str, str],
         header_map: dict[str, str],
-    ) -> ParsedRow | None:
-        """Parse a single CSV row into a ParsedRow dict, or None to skip."""
+        row_number: int,
+    ) -> tuple[ParsedRow, None] | tuple[None, SkippedRow]:
+        """Parse a single CSV row. Returns (ParsedRow, None) or (None, SkippedRow)."""
+        raw_date = row.get(header_map.get("date", ""), "").strip()
+        raw_narration = row.get(header_map.get("narration", ""), "").strip()
         debit_raw = row.get(header_map.get("debit", ""), "").strip()
         credit_raw = row.get(header_map.get("credit", ""), "").strip()
+        ref_raw = row.get(header_map.get("reference", ""), "").strip()
+
+        def skipped(reason: str) -> tuple[None, SkippedRow]:
+            return None, SkippedRow(
+                row_number=row_number,
+                date=raw_date,
+                narration=raw_narration[:100],
+                debit=debit_raw,
+                credit=credit_raw,
+                reference=ref_raw,
+                reason=reason,  # type: ignore[arg-type]
+            )
 
         debit = self.clean_amount(debit_raw)
         credit = self.clean_amount(credit_raw)
 
-        # Skip summary/blank rows with no amounts
         if debit == Decimal("0") and credit == Decimal("0"):
-            return None
+            log.debug("Row skipped — zero debit and credit: %s", raw_narration[:60])
+            return skipped("zero_amount")
+
+        parsed_date = self.parse_date(raw_date)
+        if parsed_date is None:
+            return skipped("invalid_date")
+
+        if not raw_narration:
+            return skipped("missing_narration")
 
         if debit > Decimal("0"):
             amount = debit
@@ -150,26 +196,24 @@ class BaseCSVParser(ABC):
             amount = credit
             transaction_type = "credit"
 
-        date_str = row.get(header_map.get("date", ""), "")
-        parsed_date = self.parse_date(date_str)
-        if parsed_date is None:
-            return None
-
-        narration = row.get(header_map.get("narration", ""), "").strip()
-        if not narration:
-            return None
-
-        ref_raw = row.get(header_map.get("reference", ""), "").strip()
-        reference_number = ref_raw if ref_raw and ref_raw not in ("0", "00000000000") else None
+        reference_number = (
+            ref_raw
+            if ref_raw and not re.fullmatch(r'0+', ref_raw)
+            else None
+        )
 
         balance_raw = row.get(header_map.get("balance", ""), "")
-        closing_balance = self.clean_amount(balance_raw) if balance_raw.strip() else None
+        closing_balance = (
+            self.clean_amount(balance_raw)
+            if balance_raw.strip()
+            else None
+        )
 
         return ParsedRow(
             transaction_date=parsed_date,
-            raw_description=narration,
+            raw_description=raw_narration,
             amount=amount,
             transaction_type=transaction_type,
             reference_number=reference_number,
             closing_balance=closing_balance,
-        )
+        ), None

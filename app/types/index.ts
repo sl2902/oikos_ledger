@@ -30,6 +30,16 @@ export interface UploadStatusResponse {
   error_message: string | null
 }
 
+export interface DroppedRow {
+  row_number: number
+  date: string
+  narration: string
+  debit: string
+  credit: string
+  reference: string
+  reason: "zero_amount" | "duplicate_reference" | "malformed_row" | "invalid_date" | "missing_narration"
+}
+
 export interface AmendmentRequest {
   amendments: {
     field_name: "normalized_merchant" | "category" | "subcategory" | "payment_method"

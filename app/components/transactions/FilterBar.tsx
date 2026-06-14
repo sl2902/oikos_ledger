@@ -54,6 +54,7 @@ export function FilterBar({ filters, onChange, availableMonths, selectedMonth, o
   const hasActiveFilters =
     !!filters.search ||
     !!filters.category ||
+    !!filters.transaction_type ||
     !!filters.payment_method ||
     filters.amount_min != null ||
     filters.amount_max != null
@@ -114,6 +115,20 @@ export function FilterBar({ filters, onChange, availableMonths, selectedMonth, o
                 {m}
               </SelectItem>
             ))}
+          </SelectContent>
+        </Select>
+
+        <Select
+          value={filters.transaction_type ?? "all"}
+          onValueChange={(v) => onChange({ ...filters, transaction_type: v === "all" ? undefined : (v as "debit" | "credit") })}
+        >
+          <SelectTrigger className="w-28">
+            <SelectValue placeholder="Type" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Types</SelectItem>
+            <SelectItem value="debit">Debits (Dr)</SelectItem>
+            <SelectItem value="credit">Credits (Cr)</SelectItem>
           </SelectContent>
         </Select>
 

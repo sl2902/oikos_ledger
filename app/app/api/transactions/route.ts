@@ -37,6 +37,7 @@ export async function GET(request: Request) {
   const date_to = searchParams.get("date_to")
   const amount_min = searchParams.get("amount_min")
   const amount_max = searchParams.get("amount_max")
+  const transaction_type = searchParams.get("transaction_type")
 
   if (!account_id) {
     return Response.json({ error: "account_id is required" }, { status: 400 })
@@ -63,6 +64,10 @@ export async function GET(request: Request) {
   if (date_to) conditions.push(lte(transactions.transaction_date, date_to))
   if (amount_min) conditions.push(gte(transactions.amount, amount_min))
   if (amount_max) conditions.push(lte(transactions.amount, amount_max))
+  
+  if (transaction_type === "debit" || transaction_type === "credit") {
+    conditions.push(eq(transactions.transaction_type, transaction_type))
+  }
 
   const where = and(...conditions)
 

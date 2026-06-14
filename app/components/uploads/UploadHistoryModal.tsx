@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { Fragment, useState } from "react"
 import { AlertTriangle, CheckCircle2, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -10,6 +10,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { useUploads, type Upload } from "@/lib/hooks/useUploads"
+import type { DroppedRow } from "@/types"
 
 interface Props {
   accountId: string
@@ -68,11 +69,50 @@ function BalanceCell({ upload }: { upload: Upload }) {
   return <span className="text-muted-foreground">—</span>
 }
 
+function DroppedRowsTable({ rows }: { rows: DroppedRow[] }) {
+  return (
+    <div className="mt-2 rounded-md border border-yellow-200 bg-yellow-50 p-3 dark:border-yellow-800 dark:bg-yellow-950/30">
+      <p className="mb-2 text-xs font-medium text-yellow-800 dark:text-yellow-300">
+        Skipped transactions:
+      </p>
+      <table className="w-full text-xs text-yellow-800 dark:text-yellow-300">
+        <thead>
+          <tr className="border-b border-yellow-200 dark:border-yellow-800">
+            <th className="py-1 text-left font-medium">Row</th>
+            <th className="py-1 text-left font-medium">Date</th>
+            <th className="py-1 text-left font-medium">Narration</th>
+            <th className="py-1 text-left font-medium">Amount</th>
+            <th className="py-1 text-left font-medium">Reason</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, i) => (
+            <tr key={i} className="border-b border-yellow-100 last:border-0 dark:border-yellow-900">
+              <td className="py-1">{row.row_number}</td>
+              <td className="py-1">{row.date}</td>
+              <td className="max-w-[180px] truncate py-1">{row.narration || "—"}</td>
+              <td className="py-1">
+                {row.debit && row.debit !== "0" && row.debit !== "0.00"
+                  ? `–${row.debit}`
+                  : row.credit && row.credit !== "0" && row.credit !== "0.00"
+                  ? `+${row.credit}`
+                  : "—"}
+              </td>
+              <td className="py-1 capitalize">{row.reason.replace(/_/g, " ")}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 export function UploadHistoryModal({ accountId, bankName, onDelete, onClose }: Props) {
   const { uploads, isLoading, mutate } = useUploads(accountId)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [expandedId, setExpandedId] = useState<string | null>(null)
 
   const confirmingUpload = confirmDeleteId
     ? (uploads.find((u) => u.id === confirmDeleteId) ?? null)
@@ -173,36 +213,59 @@ export function UploadHistoryModal({ accountId, bankName, onDelete, onClose }: P
                 {uploads.map((upload) => {
                   const canDelete =
                     upload.status !== "pending" && upload.status !== "processing"
+                  const hasDropped = upload.dropped_rows && upload.dropped_rows.length > 0
+                  const expanded = expandedId === upload.id
                   return (
-                    <tr key={upload.id} className="border-b last:border-0">
-                      <td className="max-w-[180px] truncate py-2.5 pr-4 font-mono text-xs">
-                        {upload.filename}
-                      </td>
-                      <td className="whitespace-nowrap py-2.5 pr-4 text-muted-foreground">
-                        {formatUploadDate(upload.uploaded_at)}
-                      </td>
-                      <td className="py-2.5 pr-4 text-right">
-                        {upload.row_count ?? "—"}
-                      </td>
-                      <td className="py-2.5 pr-4">
-                        <BalanceCell upload={upload} />
-                      </td>
-                      <td className="py-2.5 pr-4">
-                        <StatusBadge status={upload.status} />
-                      </td>
-                      <td className="py-2.5">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setConfirmDeleteId(upload.id)}
-                          disabled={!canDelete}
-                          className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
-                          title="Delete upload"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      </td>
-                    </tr>
+                    <Fragment key={upload.id}>
+                      <tr className="border-b last:border-0">
+                        <td className="max-w-[180px] truncate py-2.5 pr-4 font-mono text-xs">
+                          {upload.filename}
+                        </td>
+                        <td className="whitespace-nowrap py-2.5 pr-4 text-muted-foreground">
+                          {formatUploadDate(upload.uploaded_at)}
+                        </td>
+                        <td className="py-2.5 pr-4 text-right">
+                          {upload.row_count ?? "—"}
+                        </td>
+                        <td className="py-2.5 pr-4">
+                          <BalanceCell upload={upload} />
+                        </td>
+                        <td className="py-2.5 pr-4">
+                          <div className="flex flex-col gap-1">
+                            <StatusBadge status={upload.status} />
+                            {hasDropped && (
+                              <button
+                                type="button"
+                                onClick={() => setExpandedId(expanded ? null : upload.id)}
+                                className="flex items-center gap-1 rounded-full bg-yellow-100 px-2 py-0.5 text-xs text-yellow-700 hover:bg-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-400"
+                              >
+                                <AlertTriangle className="h-3 w-3" />
+                                {upload.dropped_rows!.length} rows skipped
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-2.5">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setConfirmDeleteId(upload.id)}
+                            disabled={!canDelete}
+                            className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+                            title="Delete upload"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </td>
+                      </tr>
+                      {expanded && hasDropped && (
+                        <tr>
+                          <td colSpan={6} className="pb-3 pt-0">
+                            <DroppedRowsTable rows={upload.dropped_rows!} />
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   )
                 })}
               </tbody>
