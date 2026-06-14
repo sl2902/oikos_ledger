@@ -25,6 +25,13 @@ HDFC_SAMPLE = """Date     ,Narration,Value Dat,Debit Amount,Credit Amount,Chq/Re
 HDFC_SAMPLE_MIXED_CASE = """DATE     ,NARRATION,VALUE DAT,DEBIT AMOUNT,CREDIT AMOUNT,CHQ/REF NUMBER,CLOSING BALANCE
 01/05/26  ,UPI-MERCHANT-VPA@PTY-YESB0X-123456-UPI,01/05/26,100.00,,,50000.00"""
 
+# Axis Bank sample — real-format CSV (DD-MM-YYYY, DR/CR cols, PARTICULARS, dash ref)
+AXIS_SAMPLE = """SRL NO,Tran Date,CHQNO,PARTICULARS,DR,CR,BAL,SOL
+1,02-06-2022,-,INB/893911264/WIKIMEDIA(PAYGATE)/,1040.00,,726713.83,333
+2,05-06-2022,-,ATM-CASH-AXIS/DECN236610/678/050622/BANGALORE,1000.00,,705713.83,333
+3,17-06-2022,-,POS/FRESH AND MORE SU/BENGALURU/170622/12:54,270.00,,706246.83,333
+4,02-06-2022,-,INB/893943897/axismf/BillPay - AXISTXN15588050INB,20000.00,,706713.83,333"""
+
 
 def test_hdfc_parse_upi_transaction():
     parser = HDFCParser()
@@ -329,3 +336,125 @@ def test_normalize_batch_uses_parser():
         normalize_batch(rows, mock_client, parser=mock_parser)
     )
     mock_parser.normalize_narration.assert_called_once()
+
+# ── test hdfc bank format ─────────────────────────────────────────────────
+
+def test_wrong_bank_format_raises_value_error():
+    """Uploading SBI format to HDFC parser raises ValueError."""
+    sbi_csv = """Txn Date,Value Date,Description,Ref No./Cheque No.,Debit,Credit,Balance
+01 May 2026,01 May 2026,UPI-SWIGGY,,610.00,,1000.00"""
+    with pytest.raises(ValueError, match="required columns not found"):
+        HDFCParser().parse_csv(sbi_csv)
+
+def test_empty_file_raises_value_error():
+    """Empty CSV raises ValueError."""
+    with pytest.raises(ValueError):
+        HDFCParser().parse_csv("")
+
+def test_header_only_file_returns_empty():
+    """CSV with header but no data rows returns empty lists."""
+    csv = """Date,Narration,Value Dat,Debit Amount,Credit Amount,Chq/Ref Number,Closing Balance"""
+    rows, skipped = HDFCParser().parse_csv(csv)
+    assert rows == []
+    assert skipped == []
+
+def test_correct_bank_format_does_not_raise():
+    """Valid HDFC format does not raise ValueError."""
+    csv = """Date,Narration,Value Dat,Debit Amount,Credit Amount,Chq/Ref Number,Closing Balance
+01/05/26,UPI-SWIGGY-TEST,01/05/26,610.00,0.00,REF001,900.00"""
+    rows, skipped = HDFCParser().parse_csv(csv)
+    assert len(rows) == 1
+
+
+# ── Axis Bank parser tests ────────────────────────────────────────────────────
+
+
+def test_axis_parser_parses_inb_narration():
+    """INB/ narration parsed correctly."""
+    rows, skipped = AxisParser().parse_csv(AXIS_SAMPLE)
+    inb_rows = [r for r in rows if "wikimedia" in r["raw_description"].lower()]
+    assert len(inb_rows) == 1
+    assert inb_rows[0]["amount"] == Decimal("1040.00")
+    assert inb_rows[0]["transaction_type"] == "debit"
+
+
+def test_axis_parser_parses_pos_narration():
+    """POS/ narration parsed correctly."""
+    rows, skipped = AxisParser().parse_csv(AXIS_SAMPLE)
+    pos_rows = [r for r in rows if "fresh and more" in r["raw_description"].lower()]
+    assert len(pos_rows) == 1
+    assert pos_rows[0]["amount"] == Decimal("270.00")
+
+
+def test_axis_parser_date_format():
+    """Axis DD-MM-YYYY date format parsed correctly."""
+    rows, skipped = AxisParser().parse_csv(AXIS_SAMPLE)
+    assert rows[0]["transaction_date"].year == 2022
+    assert rows[0]["transaction_date"].month == 6
+    assert rows[0]["transaction_date"].day == 2
+
+
+def test_axis_parser_amount_with_commas():
+    """Amounts with commas parsed correctly."""
+    rows, skipped = AxisParser().parse_csv(AXIS_SAMPLE)
+    assert rows[0]["amount"] == Decimal("1040.00")
+
+
+def test_axis_parser_dash_reference_is_null():
+    """Reference number '-' treated as null."""
+    rows, skipped = AxisParser().parse_csv(AXIS_SAMPLE)
+    assert all(r["reference_number"] is None for r in rows)
+
+
+def test_axis_normalize_narration_inb():
+    """INB/ pattern returns NEFT/Transfer with merchant from segment 2."""
+    parser = AxisParser()
+    result = parser.normalize_narration("INB/893911264/WIKIMEDIA(PAYGATE)/")
+    assert result is not None
+    assert result["payment_method"] == "NEFT"
+    assert result["merchant"] == "Wikimedia"
+    assert result["needs_llm"] is False
+
+
+def test_axis_normalize_narration_pos():
+    """POS/ pattern returns POS/Shopping with merchant from segment 1."""
+    parser = AxisParser()
+    result = parser.normalize_narration(
+        "POS/FRESH AND MORE SU/BENGALURU/170622/12:54"
+    )
+    assert result is not None
+    assert result["payment_method"] == "POS"
+    assert result["merchant"] == "Fresh And More Su"
+    assert result["category"] == "Shopping"
+
+
+def test_axis_normalize_narration_atm():
+    """ATM-CASH-AXIS/ pattern returns ATM/ATM Withdrawal with city as merchant."""
+    parser = AxisParser()
+    result = parser.normalize_narration(
+        "ATM-CASH-AXIS/DECN236610/678/050622/BANGALORE"
+    )
+    assert result is not None
+    assert result["payment_method"] == "ATM"
+    assert result["category"] == "ATM Withdrawal"
+
+
+def test_axis_normalize_narration_unknown():
+    """Unknown narration returns None."""
+    parser = AxisParser()
+    result = parser.normalize_narration("UNKNOWN NARRATION FORMAT")
+    assert result is None
+
+
+def test_axis_wrong_format_raises_value_error():
+    """HDFC format uploaded to Axis parser raises ValueError."""
+    hdfc_csv = """Date,Narration,Value Dat,Debit Amount,Credit Amount,Chq/Ref Number,Closing Balance
+01/05/26,UPI-SWIGGY,01/05/26,610.00,0.00,REF001,900.00"""
+    with pytest.raises(ValueError, match="required columns not found"):
+        AxisParser().parse_csv(hdfc_csv)
+
+
+def test_axis_closing_balance_parsed():
+    """Closing balance extracted correctly from BAL column."""
+    rows, skipped = AxisParser().parse_csv(AXIS_SAMPLE)
+    assert rows[0]["closing_balance"] == Decimal("726713.83")
