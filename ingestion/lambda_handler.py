@@ -6,8 +6,6 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-import openai
-
 from ingestion.config import settings
 from ingestion.db.client import (
     get_session,
@@ -24,6 +22,23 @@ from ingestion.pipeline.normalizer import get_normalizer_client
 
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
+
+
+async def _normalize_with_fallback(rows: list, parser) -> list:
+    """Normalize with Bedrock primary, OpenAI fallback."""
+    client = get_normalizer_client()
+    log.info("Normalizer client: %s", type(client).__name__)
+    try:
+        return await normalizer_module.normalize_batch(rows, client, parser=parser)
+    except Exception as e:
+        log.warning("Primary normalizer failed: %s — falling back to OpenAI", e)
+        import openai as _openai
+        from ingestion.pipeline.normalizer import OpenAINormalizerClient
+        fallback = OpenAINormalizerClient(
+            client=_openai.AsyncOpenAI(api_key=settings.openai_api_key),
+            model=settings.normalizer_model,
+        )
+        return await normalizer_module.normalize_batch(rows, fallback, parser=parser)
 
 
 async def _run_pipeline(
@@ -44,10 +59,10 @@ async def _run_pipeline(
         "s3_key": s3_key,
     })
 
-    try:
-        normalizer_client = get_normalizer_client()
-        openai_client = openai.AsyncOpenAI(api_key=settings.openai_api_key)
+    log.setLevel(logging.DEBUG)
+    log.info("Lambda handler loaded — log level: %s", log.level)
 
+    try:
         with get_session() as session:
             # 1. Fetch upload and verify state
             stage = "fetch_upload"
@@ -155,7 +170,7 @@ async def _run_pipeline(
 
             # 6. Normalize
             stage = "normalize"
-            normalized = await normalizer_module.normalize_batch(parsed_rows, normalizer_client, parser=parser)
+            normalized = await _normalize_with_fallback(parsed_rows, parser)
             log.info("Normalization complete", extra={
                 "upload_id": str(upload_id),
                 "total": len(normalized),
@@ -173,11 +188,10 @@ async def _run_pipeline(
 
             # 7. Embed
             stage = "embed"
-            embeddings = await embedder_module.generate_embeddings(normalized, openai_client)
+            embeddings = await embedder_module.generate_embeddings(normalized)
             log.info("Embeddings generated", extra={
                 "upload_id": str(upload_id),
                 "count": len(embeddings),
-                "model": "text-embedding-3-small",
             })
 
             # 8. Write (idempotent)

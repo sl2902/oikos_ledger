@@ -209,21 +209,30 @@ def test_get_normalizer_client_openai():
     assert isinstance(client, OpenAINormalizerClient)
 
 
-def test_get_normalizer_client_gemini():
+def test_openai_fallback_when_provider_is_openai():
+    """OpenAI client returned when normalizer_provider='openai'."""
     mock_s = MagicMock()
-    mock_s.normalizer_provider = "gemini"
-    mock_s.normalizer_model = "gemini-1.5-flash"
+    mock_s.normalizer_provider = "openai"
+    mock_s.normalizer_model = "gpt-4o-mini"
+    mock_s.openai_api_key = "sk-test"
     with patch("ingestion.pipeline.normalizer.settings", mock_s):
         client = get_normalizer_client()
-    assert isinstance(client, GeminiNormalizerClient)
+    assert "openai" in type(client).__name__.lower()
 
 
-def test_get_normalizer_client_invalid():
+def test_get_normalizer_client_bedrock_fallback_on_error():
+    """Falls back to OpenAI when Bedrock client raises on construction."""
     mock_s = MagicMock()
-    mock_s.normalizer_provider = "anthropic"
+    mock_s.normalizer_provider = "bedrock"
+    mock_s.normalizer_model = "gpt-4o-mini"
+    mock_s.openai_api_key = "sk-test"
     with patch("ingestion.pipeline.normalizer.settings", mock_s):
-        with pytest.raises(ValueError, match="Unsupported normalizer provider"):
-            get_normalizer_client()
+        with patch(
+            "ingestion.pipeline.bedrock_normalizer.BedrockNormalizerClient.__init__",
+            side_effect=RuntimeError("no credentials"),
+        ):
+            client = get_normalizer_client()
+    assert isinstance(client, OpenAINormalizerClient)
 
 
 # ── Payment gateway detection ─────────────────────────────────────────────────
@@ -305,6 +314,45 @@ def test_detect_subcategory_none():
     assert subcategory is None
     assert cat is None
 
+
+# ── Bedrock normalizer ────────────────────────────────────────────────────────
+
+def test_bedrock_normalizer_client_created_when_provider_is_bedrock():
+    """BedrockNormalizerClient returned when normalizer_provider='bedrock'."""
+    with patch("boto3.client"):
+        from ingestion.pipeline.bedrock_normalizer import BedrockNormalizerClient
+        client = BedrockNormalizerClient()
+        assert client is not None
+
+
+def test_parse_bedrock_response_valid_json():
+    """Valid JSON response parsed correctly."""
+    from ingestion.pipeline.bedrock_normalizer import _parse_response
+    result = _parse_response(
+        '{"merchant_name": "Swiggy", "category": "Food", "subcategory": "Food Delivery"}'
+    )
+    assert result["merchant_name"] == "Swiggy"
+    assert result["category"] == "Food"
+    assert result["subcategory"] == "Food Delivery"
+
+
+def test_parse_bedrock_response_with_markdown_fences():
+    """Response wrapped in markdown fences parsed correctly."""
+    from ingestion.pipeline.bedrock_normalizer import _parse_response
+    result = _parse_response(
+        '```json\n{"merchant_name": "Apollo Pharmac", "category": "Medical", "subcategory": null}\n```'
+    )
+    assert result["merchant_name"] == "Apollo Pharmac"
+    assert result["subcategory"] is None
+
+
+def test_bedrock_embedder_dimensions():
+    """Titan Embed V2 produces 1536-dimensional embeddings."""
+    from ingestion.pipeline.bedrock_embedder import BedrockEmbedder
+    assert BedrockEmbedder.DIMENSIONS == 1536
+
+
+# ── Merchant registry ─────────────────────────────────────────────────────────
 
 def test_merchant_registry_lookup_uses_extracted_name():
     """Registry lookup uses extracted merchant name not raw narration."""

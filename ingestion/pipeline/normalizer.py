@@ -230,23 +230,29 @@ def detect_payment_gateway(narration: str) -> tuple[str | None, str | None]:
     return gateway, merchant if merchant else None
 
 
-def get_normalizer_client() -> NormalizerClient:
-    """Return the configured normalizer client based on settings.normalizer_provider.
+def _get_openai_client() -> NormalizerClient:
+    return OpenAINormalizerClient(
+        client=openai.AsyncOpenAI(api_key=settings.openai_api_key),
+        model=settings.normalizer_model,
+    )
 
-    Raises ValueError for unsupported providers.
+
+def get_normalizer_client() -> NormalizerClient:
+    """Return the configured normalizer client.
+
+    Uses Bedrock Claude Haiku when normalizer_provider='bedrock',
+    falls back to OpenAI when normalizer_provider='openai' or
+    on import error.
     """
-    if settings.normalizer_provider == "openai":
-        return OpenAINormalizerClient(
-            client=openai.AsyncOpenAI(api_key=settings.openai_api_key),
-            model=settings.normalizer_model,
-        )
-    elif settings.normalizer_provider == "gemini":
-        return GeminiNormalizerClient(model=settings.normalizer_model)
-    else:
-        raise ValueError(
-            f"Unsupported normalizer provider: {settings.normalizer_provider}. "
-            f"Supported providers: openai, gemini"
-        )
+    if settings.normalizer_provider == "bedrock":
+        try:
+            from ingestion.pipeline.bedrock_normalizer import BedrockNormalizerClient
+            return BedrockNormalizerClient()
+        except Exception as e:
+            log.warning(
+                "Bedrock normalizer unavailable: %s — falling back to OpenAI", e
+            )
+    return _get_openai_client()
 
 
 class NormalizedTransaction(TypedDict):
@@ -465,11 +471,15 @@ async def normalize_with_llm(
             log.debug("Merchant registry lookup skipped: %s", exc)
 
     # Step 2: LLM normalization
-    log.info("LLM normalization", extra={
-        "raw": raw[:60],
-        "provider": settings.normalizer_provider,
-        "model": settings.normalizer_model,
-    })
+    log.info("LLM normalization -raw: %s -provider: %s -model: %s", 
+        raw[:60],
+        settings.normalizer_provider,
+        settings.normalizer_model,
+    )
+
+    final_category = "Other"
+    final_subcategory = None
+
     try:
         result = await client.normalize(raw)
 
@@ -499,11 +509,11 @@ async def normalize_with_llm(
             "subcategory": result["subcategory"],
         })
     except Exception as exc:
-        log.warning("LLM normalization failed", extra={
-            "raw": raw[:60],
-            "error": str(exc),
-            "fallback_merchant": raw[:50],
-        })
+        log.warning(
+            "LLM normalization failed: %s — raw: %s",
+            str(exc),
+            raw[:60],
+        )
         result = _fallback_result(raw)
 
     # # Step 3: detect subcategory deterministically

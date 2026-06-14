@@ -29,8 +29,17 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""   # optional — reserved for future recommendations feature
     openai_api_key: str
 
+    # ── Bedrock ───────────────────────────────────────────────────────────────
+    bedrock_region: str = "ap-south-1"
+    bedrock_normalizer_model: str = "anthropic.claude-3-haiku-20240307-v1:0"
+    bedrock_embedding_model: str = "amazon.titan-embed-text-v2:0"
+
+    # ── Retry ─────────────────────────────────────────────────────────────────
+    max_retries: int = 3
+    retry_backoff_seconds: float = 1.0
+
     # ── LLM Normalization ─────────────────────────────────────────────────────
-    normalizer_provider: str = "openai"         # openai | gemini
+    normalizer_provider: str = "bedrock"        # openai | bedrock
     normalizer_model: str = "gpt-4o-mini"       # model name for the chosen provider
     normalizer_max_concurrency: int = 5         # max concurrent LLM calls
 
