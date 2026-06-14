@@ -1,11 +1,17 @@
 import logging
+import re
 
-from .base import BaseCSVParser, ParsedRow, SkippedRow
+from .base import BaseCSVParser, NarrationResult, ParsedRow, SkippedRow
 
 log = logging.getLogger(__name__)
 
 
 class HDFCParser(BaseCSVParser):
+    HDFC_BILL_PAY_MAP: dict[str, str] = {
+        "HDFCSI": "HDFC Credit Card",
+        # Add more as discovered from real statements
+    }
+
     @property
     def bank_name(self) -> str:
         return "HDFC Bank"
@@ -25,6 +31,33 @@ class HDFCParser(BaseCSVParser):
             "balance": ["closing balance", "balance"],
             "value_date": ["value dat", "value date"],
         }
+
+    def normalize_narration(self, narration: str) -> NarrationResult | None:
+        """Handle HDFC-specific narration patterns.
+
+        Patterns handled:
+        - IB BILLPAY DR → Finance / Credit Card
+        """
+        if "IB BILLPAY DR" in narration.upper():
+            bill_match = re.match(
+                r'IB\s+BILLPAY\s+DR-([^-]+)-', narration, re.IGNORECASE
+            )
+            if bill_match:
+                biller_code = bill_match.group(1).strip().upper()
+                merchant = self.HDFC_BILL_PAY_MAP.get(
+                    biller_code, biller_code.title()
+                )
+            else:
+                merchant = "Bill Payment"
+
+            return NarrationResult(
+                merchant=merchant,
+                payment_method="Bill Pay",
+                category="Finance",
+                subcategory="Credit Card",
+                needs_llm=False,
+            )
+        return None
 
     def parse_csv(self, file_content: str) -> tuple[list[ParsedRow], list[SkippedRow]]:
         """Override base parse_csv to handle HDFC narrations with embedded commas.

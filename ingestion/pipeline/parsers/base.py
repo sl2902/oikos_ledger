@@ -46,6 +46,14 @@ class SkippedRow(TypedDict):
     ]
 
 
+class NarrationResult(TypedDict):
+    merchant: str
+    payment_method: str
+    category: str
+    subcategory: str | None
+    needs_llm: bool
+
+
 class BaseCSVParser(ABC):
     """Abstract base for bank-specific CSV parsers."""
 
@@ -66,6 +74,15 @@ class BaseCSVParser(ABC):
         Optional keys: reference, balance, value_date
         """
         ...
+
+    def normalize_narration(self, narration: str) -> "NarrationResult | None":
+        """Bank-specific narration code detection.
+
+        Override in subclasses to handle bank-specific narration
+        formats before common detection runs.
+        Return None to fall through to common detection.
+        """
+        return None
 
     def parse_csv(self, file_content: str) -> tuple[list[ParsedRow], list[SkippedRow]]:
         """Parse CSV content. Returns (parsed_rows, skipped_rows)."""

@@ -23,7 +23,7 @@ from ingestion.pipeline.constants import (
     SUBCATEGORY_KEYWORDS,
 )
 from .categorizer import categorize_transaction, detect_payment_method
-from .parsers.base import ParsedRow
+from .parsers.base import BaseCSVParser, ParsedRow
 from .upi_parser import parse_upi_narration
 
 log = logging.getLogger(__name__)
@@ -289,11 +289,45 @@ class _PartialNormalized(TypedDict):
     gateway: str | None
 
 
-def normalize_deterministic(row: ParsedRow) -> _PartialNormalized:
+def normalize_deterministic(
+    row: ParsedRow,
+    parser: BaseCSVParser | None = None,
+) -> _PartialNormalized:
     """Apply all deterministic normalization steps to a parsed row."""
     narration = row["raw_description"]
 
-    # Step 1: payment gateway pattern takes priority — these are not UPI transactions
+    # Step 1: Bank-specific narration detection
+    if parser:
+        bank_result = parser.normalize_narration(narration)
+        if bank_result:
+            log.debug("Bank-specific narration match", extra={
+                "raw": narration[:60],
+                "merchant": bank_result["merchant"],
+                "payment_method": bank_result["payment_method"],
+                "category": bank_result["category"],
+            })
+            return _PartialNormalized(
+                transaction_date=row["transaction_date"],
+                raw_description=narration,
+                amount=row["amount"],
+                transaction_type=row["transaction_type"],
+                reference_number=row.get("reference_number"),
+                closing_balance=row.get("closing_balance"),
+                row_number=row.get("row_number"),
+                payment_method=bank_result["payment_method"],
+                upi_merchant=None,
+                upi_app=None,
+                upi_vpa=None,
+                upi_ref=None,
+                upi_counterparty_bank=None,
+                merchant=bank_result["merchant"],
+                category=bank_result["category"],
+                subcategory=bank_result["subcategory"],
+                needs_llm=bank_result["needs_llm"],
+                gateway=None,
+            )
+
+    # Step 2: payment gateway pattern takes priority — these are not UPI transactions
     gateway, gateway_merchant = detect_payment_gateway(narration)
     if gateway:
         category = categorize_transaction(narration, gateway_merchant, "Other")
@@ -352,43 +386,6 @@ def normalize_deterministic(row: ParsedRow) -> _PartialNormalized:
     if cat_override:
         category = cat_override
     needs_llm = category == "Other" or merchant is None
-
-    # Bill payment narration override
-    # Format: IB BILLPAY DR-{BILLER_CODE}-{BANK}-NETBANK,...
-    BILL_PAY_MERCHANT_MAP = {
-        "HDFCSI": "HDFC Credit Card",
-    }
-
-    if "IB BILLPAY DR" in narration.upper():
-        bill_match = re.match(
-            r'IB\s+BILLPAY\s+DR-([^-]+)-', narration, re.IGNORECASE
-        )
-        if bill_match:
-            biller_code = bill_match.group(1).strip().upper()
-            merchant = BILL_PAY_MERCHANT_MAP.get(biller_code, biller_code.title())
-        else:
-            merchant = "Bill Payment"
-        
-        return _PartialNormalized(
-            transaction_date=row["transaction_date"],
-            raw_description=narration,
-            amount=row["amount"],
-            transaction_type=row["transaction_type"],
-            reference_number=row["reference_number"],
-            closing_balance=row.get("closing_balance"),
-            row_number=row.get("row_number"),
-            payment_method="Bill Pay",
-            upi_merchant=None,
-            upi_app=None,
-            upi_vpa=None,
-            upi_ref=None,
-            upi_counterparty_bank=None,
-            merchant=merchant,
-            category="Finance",
-            subcategory="Credit Card",
-            needs_llm=False,
-            gateway=None,
-        )
 
     log.debug("Deterministic normalization", extra={
         "raw": narration[:60],
@@ -591,12 +588,13 @@ def _partial_to_normalized(partial: _PartialNormalized) -> NormalizedTransaction
 async def normalize_batch(
     rows: list[ParsedRow],
     client: NormalizerClient,
+    parser: BaseCSVParser | None = None,
 ) -> list[NormalizedTransaction]:
     """Normalize a batch of parsed rows using deterministic matching then LLM.
 
     LLM calls run concurrently up to settings.normalizer_max_concurrency.
     """
-    partials = [normalize_deterministic(row) for row in rows]
+    partials = [normalize_deterministic(row, parser) for row in rows]
 
     sem = asyncio.Semaphore(settings.normalizer_max_concurrency)
 

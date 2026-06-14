@@ -90,7 +90,7 @@ async def _run_pipeline(
 
             # 5. Parse
             stage = "parse"
-            parsed_rows, skipped_rows = parser_module.parse_csv(bank_name, file_content)
+            parsed_rows, skipped_rows, parser = parser_module.parse_csv(bank_name, file_content)
             log.info("CSV parsed", extra={
                 "upload_id": str(upload_id),
                 "bank_name": bank_name,
@@ -139,7 +139,7 @@ async def _run_pipeline(
 
             # 6. Normalize
             stage = "normalize"
-            normalized = await normalizer_module.normalize_batch(parsed_rows, normalizer_client)
+            normalized = await normalizer_module.normalize_batch(parsed_rows, normalizer_client, parser=parser)
             log.info("Normalization complete", extra={
                 "upload_id": str(upload_id),
                 "total": len(normalized),

@@ -96,7 +96,7 @@ async def run() -> None:
         sys.exit(1)
 
     file_content = TEST_CSV.read_text(encoding="utf-8", errors="replace")
-    rows = parser_module.parse_csv("HDFC Bank", file_content)
+    rows, skipped_rows, parser = parser_module.parse_csv("HDFC Bank", file_content)
     print(f"Parsed {len(rows)} rows from {TEST_CSV.name}")
 
     print("\nParsed row closing_balance sample:")
@@ -112,7 +112,7 @@ async def run() -> None:
     print(f"  upload_id:  {upload_id}")
 
     normalizer_client = get_normalizer_client()
-    normalized = await normalizer_module.normalize_batch(rows, normalizer_client)
+    normalized = await normalizer_module.normalize_batch(rows, normalizer_client, parser=parser)
     print(f"\nNormalized {len(normalized)} transactions")
 
     print("\nNormalized row closing_balance sample:")

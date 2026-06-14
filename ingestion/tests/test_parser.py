@@ -11,6 +11,7 @@ from ingestion.pipeline.parser import (
     get_parser,
     parse_csv,
 )
+from ingestion.pipeline.parsers.axis import AxisParser
 from ingestion.pipeline.parsers.hdfc import HDFCParser
 
 # Real-format HDFC CSV fixture (2-digit year, trailing spaces on dates)
@@ -101,7 +102,7 @@ def test_parser_fallback_detection():
 
 
 def test_parse_csv_via_router():
-    rows, _ = parse_csv("HDFC Bank", HDFC_SAMPLE)
+    rows, _, _ = parse_csv("HDFC Bank", HDFC_SAMPLE)
     assert len(rows) == 4
 
 
@@ -157,15 +158,15 @@ def test_row_number_intraday_order():
 
 
 def test_skipped_rows_returned_in_tuple():
-    """parse_csv returns a (rows, skipped) tuple."""
-    rows, skipped = parse_csv("HDFC Bank", HDFC_SAMPLE)
+    """parse_csv returns a (rows, skipped, parser) tuple."""
+    rows, skipped, parser = parse_csv("HDFC Bank", HDFC_SAMPLE)
     assert isinstance(rows, list)
     assert isinstance(skipped, list)
 
 
 def test_no_skipped_rows_returns_empty_list():
     """Clean CSV produces an empty skipped list."""
-    _, skipped = parse_csv("HDFC Bank", HDFC_SAMPLE)
+    _, skipped, _ = parse_csv("HDFC Bank", HDFC_SAMPLE)
     assert skipped == []
 
 
@@ -225,3 +226,106 @@ def test_multiple_skipped_rows_all_returned():
     assert len(rows) == 1
     assert len(skipped) == 2
     assert all(s["reason"] == "zero_amount" for s in skipped)
+
+
+# ── normalize_narration tests ─────────────────────────────────────────────────
+
+
+def test_hdfc_bill_payment_normalize_narration():
+    """HDFC IB BILLPAY DR detected by normalize_narration."""
+    parser = HDFCParser()
+    result = parser.normalize_narration(
+        "IB BILLPAY DR-HDFCSI-HDFC BANK LTD-NETBANK,MUM-..."
+    )
+    assert result is not None
+    assert result["merchant"] == "HDFC Credit Card"
+    assert result["payment_method"] == "Bill Pay"
+    assert result["category"] == "Finance"
+    assert result["subcategory"] == "Credit Card"
+    assert result["needs_llm"] is False
+
+
+def test_hdfc_non_billpay_returns_none():
+    """Non-bill-payment HDFC narration returns None."""
+    parser = HDFCParser()
+    result = parser.normalize_narration(
+        "UPI-SWIGGY-SWIGGY@HDFCBANK-HDFC0000001-..."
+    )
+    assert result is None
+
+
+def test_axis_cwdr_normalize_narration():
+    """Axis CWDR detected as ATM withdrawal."""
+    parser = AxisParser()
+    result = parser.normalize_narration("CWDR/ATM/123456/BANGALORE")
+    assert result is not None
+    assert result["payment_method"] == "ATM"
+    assert result["category"] == "ATM Withdrawal"
+    assert result["needs_llm"] is False
+
+
+def test_axis_pur_normalize_narration():
+    """Axis PUR detected as POS purchase."""
+    parser = AxisParser()
+    result = parser.normalize_narration("PUR/AMAZON/123456")
+    assert result is not None
+    assert result["payment_method"] == "POS"
+    assert result["category"] == "Shopping"
+    assert result["needs_llm"] is False
+
+
+def test_axis_vmt_icon_before_vmt():
+    """VMT-ICON matched before VMT (longest prefix first)."""
+    parser = AxisParser()
+    result = parser.normalize_narration("VMT-ICON/TRANSFER/...")
+    assert result is not None
+    assert result["payment_method"] == "Transfer"
+
+
+def test_axis_unknown_code_returns_none():
+    """Unknown Axis narration code returns None."""
+    parser = AxisParser()
+    result = parser.normalize_narration("UPI-SWIGGY-...")
+    assert result is None
+
+
+def test_base_parser_normalize_narration_returns_none():
+    """Base parser normalize_narration always returns None."""
+    from ingestion.pipeline.parsers.base import BaseCSVParser
+    # BaseCSVParser is abstract — use HDFCParser as concrete, call base directly
+    parser = HDFCParser()
+    result = BaseCSVParser.normalize_narration(parser, "ANY NARRATION")
+    assert result is None
+
+
+def test_normalize_batch_uses_parser():
+    """normalize_batch passes parser to normalize_deterministic."""
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+
+    from ingestion.pipeline.normalizer import normalize_batch
+
+    mock_parser = MagicMock()
+    mock_parser.normalize_narration.return_value = None
+
+    rows = [{
+        "transaction_date": date(2026, 5, 1),
+        "raw_description": "UPI-SWIGGY-TEST",
+        "amount": Decimal("610.00"),
+        "transaction_type": "debit",
+        "reference_number": "REF001",
+        "closing_balance": Decimal("1000.00"),
+        "row_number": 0,
+    }]
+
+    mock_client = MagicMock()
+    mock_client.normalize = AsyncMock(return_value={
+        "merchant_name": "Swiggy",
+        "category": "Food",
+        "subcategory": "Food Delivery",
+    })
+
+    result = asyncio.run(
+        normalize_batch(rows, mock_client, parser=mock_parser)
+    )
+    mock_parser.normalize_narration.assert_called_once()

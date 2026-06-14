@@ -56,8 +56,11 @@ def detect_bank_from_content(file_content: str) -> str | None:
     return None
 
 
-def parse_csv(bank_name: str, file_content: str) -> tuple[list[ParsedRow], list[SkippedRow]]:
-    """Route CSV content to the correct parser. Returns (parsed_rows, skipped_rows).
+def parse_csv(
+    bank_name: str,
+    file_content: str,
+) -> tuple[list[ParsedRow], list[SkippedRow], BaseCSVParser]:
+    """Route CSV content to the correct parser. Returns (parsed_rows, skipped_rows, parser).
 
     Steps:
     1. Look up primary parser via bank_name.
@@ -78,7 +81,7 @@ def parse_csv(bank_name: str, file_content: str) -> tuple[list[ParsedRow], list[
         try:
             rows, skipped = parser.parse_csv(file_content)
             _log_parse_complete(bank_name, rows, skipped)
-            return rows, skipped
+            return rows, skipped, parser
         except ValueError as e:
             log.warning("Primary parser header mismatch", extra={
                 "expected_bank": bank_name,
@@ -103,9 +106,10 @@ def parse_csv(bank_name: str, file_content: str) -> tuple[list[ParsedRow], list[
         })
 
     if detected_bank:
-        rows, skipped = get_parser(detected_bank).parse_csv(file_content)
+        fallback_parser = get_parser(detected_bank)
+        rows, skipped = fallback_parser.parse_csv(file_content)
         _log_parse_complete(detected_bank, rows, skipped)
-        return rows, skipped
+        return rows, skipped, fallback_parser
 
     raise UnsupportedBankError(
         f"Could not find a parser for '{bank_name}' and header detection found no match."
