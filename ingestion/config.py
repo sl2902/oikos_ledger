@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     retry_backoff_seconds: float = 1.0
 
     # ── LLM Normalization ─────────────────────────────────────────────────────
-    normalizer_provider: str = "bedrock"        # openai | bedrock
+    normalizer_provider: str = "openai"        # openai | bedrock
     normalizer_model: str = "gpt-4o-mini"       # model name for the chosen provider
     normalizer_max_concurrency: int = 5         # max concurrent LLM calls
 

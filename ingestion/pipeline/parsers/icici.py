@@ -68,7 +68,7 @@ class ICICIParser(BaseCSVParser):
     # Value: (payment_method, category, merchant_segment_index)
     ICICI_SLASH_PATTERNS: dict[str, tuple[str, str, int]] = {
         "NFS/CASH WDL RVSL": ("ATM", "ATM Withdrawal", -2),
-        "NFS/CASH WDL": ("ATM", "ATM Withdrawal", -2),
+        "NFS/CASH WDL": ("ATM", "ATM Withdrawal", 3), # merchant code, not city
         "MMT/IMPS": ("IMPS", "Transfer", 3),
         "VPS": ("POS", "Shopping", 1),
         "IPS": ("POS", "Shopping", 1),
@@ -294,11 +294,42 @@ class ICICIParser(BaseCSVParser):
         else:
             amount = credit
             transaction_type = "credit"
-
+        
         # Treat '-' and all-zero references as null
         reference_number = None
+        
         if ref_raw and ref_raw != "-" and not re.fullmatch(r'0+', ref_raw):
             reference_number = ref_raw
+
+        # Extract transaction ID from slash-pattern narrations as reference
+        if reference_number is None:
+            upper_narration = raw_narration.upper().replace('\n', ' ')
+            narration_clean = raw_narration.replace('\n', ' ')
+
+            if upper_narration.startswith("NFS/CASH WDL RVSL/"):
+                parts = re.split(r'[\s/]+', narration_clean)
+                for part in parts:
+                    if re.fullmatch(r'\d{12,}', part.strip()):
+                        reference_number = part.strip() + "-RVSL"
+                        break
+            elif upper_narration.startswith("NFS/"):
+                parts = narration_clean.split("/")
+                if len(parts) >= 3:
+                    txn_id = parts[2].strip()
+                    if txn_id and re.fullmatch(r'\d{12,}', txn_id):
+                        reference_number = txn_id
+            elif upper_narration.startswith("VPS/PAYMNT RVSL/"):  # before VPS/
+                parts = narration_clean.split("/")
+                if len(parts) >= 5:
+                    ref = parts[4].strip()
+                    if ref and re.fullmatch(r'\d{9,}', ref):
+                        reference_number = ref + "-RVSL"
+            elif upper_narration.startswith(("VPS/", "IPS/")):
+                parts = narration_clean.split("/")
+                if len(parts) >= 4:
+                    ref = parts[3].strip()
+                    if ref and re.fullmatch(r'\d{12,}', ref):
+                        reference_number = ref
 
         closing_balance = (
             self.clean_amount(balance_raw) if balance_raw else None
