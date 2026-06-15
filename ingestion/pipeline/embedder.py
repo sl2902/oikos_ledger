@@ -12,6 +12,7 @@ log = logging.getLogger(__name__)
 _EMBEDDING_MODEL = "text-embedding-3-small"
 _DIMENSIONS = 1536
 _BATCH_SIZE = 100
+_ZERO_VECTOR: list[float] = [0.0] * _DIMENSIONS
 
 
 def _get_openai_embedder() -> openai.AsyncOpenAI:
@@ -27,10 +28,11 @@ def get_embedder():
     return _get_openai_embedder()
 
 
-async def _openai_embed(texts: list[str]) -> list[list[float]]:
+async def _openai_embed(texts: list[str], client=None) -> list[list[float]]:
     """Embed texts using OpenAI, batched in groups of _BATCH_SIZE."""
-    client = _get_openai_embedder()
-    embeddings: list[list[float]] = [[0.0] * _DIMENSIONS for _ in texts]
+    if client is None:
+        client = _get_openai_embedder()
+    embeddings: list[list[float]] = [list(_ZERO_VECTOR) for _ in texts]
 
     for start in range(0, len(texts), _BATCH_SIZE):
         batch_texts = texts[start: start + _BATCH_SIZE]
@@ -72,4 +74,4 @@ async def generate_embeddings(
         "model": _EMBEDDING_MODEL,
     })
 
-    return await _openai_embed(texts)
+    return await _openai_embed(texts, client=embedder)

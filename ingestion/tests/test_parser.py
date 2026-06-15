@@ -504,9 +504,13 @@ def test_icici_parser_closing_balance():
 
 
 def test_icici_parser_dash_reference_is_null():
-    """Reference number '-' treated as null."""
+    """Cheque Number '-' yields null reference on plain-text rows.
+    Slash-pattern rows (NFS, VPS, MMT) may carry a narration-derived reference.
+    """
     rows, skipped = ICICIParser().parse_csv(ICICI_SAMPLE)
-    assert all(r["reference_number"] is None for r in rows)
+    plain_rows = [r for r in rows if "/" not in r["raw_description"]]
+    assert len(plain_rows) > 0
+    assert all(r["reference_number"] is None for r in plain_rows)
 
 
 def test_icici_normalize_nfs_atm():
