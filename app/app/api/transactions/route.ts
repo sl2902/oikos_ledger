@@ -1,5 +1,5 @@
 import { auth } from "@/auth"
-import { and, asc, desc, eq, gte, ilike, lt, lte } from "drizzle-orm"
+import { and, asc, desc, eq, gte, ilike, lt, lte, or } from "drizzle-orm"
 import { db } from "@/lib/db/client"
 import { transactions, uploads } from "@/lib/db/schema"
 import { getLatestAmendments } from "@/lib/db/queries/transactions"
@@ -58,7 +58,13 @@ export async function GET(request: Request) {
     conditions.push(lt(transactions.transaction_date, nextMonthStart))
   }
 
-  if (search) conditions.push(ilike(transactions.normalized_merchant, `%${search}%`))
+  if (search) {
+      const searchCondition = or(
+        ilike(transactions.normalized_merchant, `%${search}%`),
+        ilike(transactions.raw_description, `%${search}%`)
+      )
+    if (searchCondition) conditions.push(searchCondition)
+  }
   if (category) conditions.push(eq(transactions.category, category))
   if (date_from) conditions.push(gte(transactions.transaction_date, date_from))
   if (date_to) conditions.push(lte(transactions.transaction_date, date_to))

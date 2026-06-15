@@ -7,12 +7,14 @@ export interface MonthTab {
 }
 
 export function useAvailableMonths(accountId: string | null) {
-  const { data, error, isLoading,mutate } = useSWR<MonthTab[]>(
+  const { data, error, isLoading, mutate } = useSWR<MonthTab[]>(
     accountId ? `/api/transactions/months?account_id=${accountId}` : null,
     fetcher,
     { 
       revalidateOnFocus: false,
-      revalidateOnMount: true, 
+      revalidateOnMount: true,
+      errorRetryCount: 3,
+      errorRetryInterval: 3000,
     },
   )
 

@@ -156,6 +156,12 @@ export function TransactionsPanel() {
         ) : isError ? (
           <div className="flex h-32 items-center justify-center text-sm text-destructive">
             Failed to load transactions. Please refresh.
+            <button
+              onClick={() => mutateTransactions()}
+              className="text-sm text-primary underline underline-offset-2"
+            >
+              Try again
+            </button>
           </div>
                 ) : displayTransactions.length === 0 ? (
           <div className="flex flex-col h-32 items-center justify-center gap-3">
