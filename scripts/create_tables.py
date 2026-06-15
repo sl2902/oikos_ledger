@@ -35,7 +35,8 @@ def main() -> None:
             CREATE UNIQUE INDEX uq_transactions_composite
             ON transactions (
                 user_id, account_id, transaction_date,
-                amount, normalized_merchant, closing_balance
+                amount, "transaction_type", "raw_description",
+                "closing_balance"
             )
         """))
 

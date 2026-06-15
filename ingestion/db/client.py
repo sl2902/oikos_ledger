@@ -133,32 +133,48 @@ def write_transactions(
             "embedding": embedding,
         }
 
-        stmt = pg_insert(Transaction).values(**values).on_conflict_do_nothing()
-        result = session.execute(stmt)
-        was_inserted = bool(result.rowcount and result.rowcount > 0)
-        if was_inserted:
-            inserted += 1
-        else:
+        try:
+            stmt = pg_insert(Transaction).values(**values).on_conflict_do_nothing()
+            result = session.execute(stmt)
+
+            was_inserted = bool(result.rowcount and result.rowcount > 0)
+            if was_inserted:
+                inserted += 1
+            else:
+                skipped += 1
+                skipped_details.append({
+                    "row_number": txn.get("row_number"),
+                    "date": str(txn["transaction_date"]),
+                    "narration": txn["raw_description"][:100],
+                    "debit": str(txn["amount"]) if txn["transaction_type"] == "debit" else "0.00",
+                    "credit": str(txn["amount"]) if txn["transaction_type"] == "credit" else "0.00",
+                    "reference": txn.get("reference_number") or "",
+                    "reason": "duplicate_transaction",
+                })
+            log.debug("Transaction write result", extra={
+                "merchant": txn["normalized_merchant"][:40],
+                "date": str(txn["transaction_date"]),
+                "amount": str(txn["amount"]),
+                "result": "inserted" if was_inserted else "skipped",
+            })
+        except Exception as e:
+            log.warning(
+                "Transaction write failed: %s — date: %s merchant: %s",
+                str(e),
+                txn["transaction_date"],
+                txn["normalized_merchant"][:40],
+            )
             skipped += 1
             skipped_details.append({
                 "row_number": txn.get("row_number"),
                 "date": str(txn["transaction_date"]),
                 "narration": txn["raw_description"][:100],
-                "debit": str(txn["amount"])
-                    if txn["transaction_type"] == "debit"
-                    else "0.00",
-                "credit": str(txn["amount"])
-                    if txn["transaction_type"] == "credit"
-                    else "0.00",
+                "debit": str(txn["amount"]) if txn["transaction_type"] == "debit" else "0.00",
+                "credit": str(txn["amount"]) if txn["transaction_type"] == "credit" else "0.00",
                 "reference": txn.get("reference_number") or "",
-                "reason": "duplicate_transaction",
+                "reason": "write_error",
             })
-        log.debug("Transaction write result", extra={
-            "merchant": txn["normalized_merchant"][:40],
-            "date": str(txn["transaction_date"]),
-            "amount": str(txn["amount"]),
-            "result": "inserted" if was_inserted else "skipped",
-        })
+            session.rollback()
 
     log.info("Write complete", extra={
         "inserted": inserted,
