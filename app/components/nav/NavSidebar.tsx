@@ -2,12 +2,12 @@
 
 import { useState } from "react"
 import Link from "next/link"
-import { Globe, LayoutDashboard, Lightbulb, TrendingUp } from "lucide-react"
+import { Globe, LayoutDashboard, Lightbulb, Sparkles } from "lucide-react"
 
 const NAV_ITEMS = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/insights", label: "Insights", icon: TrendingUp },
-  { href: "/recommendations", label: "Recommendations", icon: Lightbulb },
+  { href: "/insights", label: "Insights", icon: Lightbulb },
+  { href: "/recommendations", label: "Recommendations", icon: Sparkles },
   { href: "/macro", label: "Macro Context", icon: Globe },
 ]
 

@@ -189,7 +189,7 @@ export function TransactionGroup({ month, transactions, showHeader, mutateTransa
         <AmendTransactionModal
           transaction={amendingTransaction}
           onSuccess={() => {
-            mutateTransactions()
+            mutateTransactions?.()
             setAmendingTransaction(null)
           }}
           onClose={() => setAmendingTransaction(null)}

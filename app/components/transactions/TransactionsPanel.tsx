@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useAccounts } from "@/components/accounts/AccountsContext"
 import { useTransactions, type TransactionFilters } from "@/lib/hooks/useTransactions"
 import { useAvailableMonths } from "@/lib/hooks/useAvailableMonths"
@@ -15,9 +15,48 @@ import { Pagination } from "./Pagination"
 
 export function TransactionsPanel() {
   const { selectedAccountId, accounts } = useAccounts()
-  const [filters, setFilters] = useState<TransactionFilters>({})
-  const [selectedMonth, setSelectedMonth] = useState<string | null>(null)
-  const [page, setPage] = useState(1)
+  const [filters, setFilters] = useState<TransactionFilters>(() => {
+    if (typeof window === "undefined") return {}
+    const stored = sessionStorage.getItem(
+      `txn_filters_${selectedAccountId}`
+    )
+    if (!stored) return {}
+    try {
+      const { filters: f } = JSON.parse(stored)
+      return f ?? {}
+    } catch {
+      return {}
+    }
+  })
+
+  const [selectedMonth, setSelectedMonth] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null
+    const stored = sessionStorage.getItem(
+      `txn_filters_${selectedAccountId}`
+    )
+    if (!stored) return null
+    try {
+      const { month } = JSON.parse(stored)
+      return month ?? null
+    } catch {
+      return null
+    }
+  })
+
+  const [page, setPage] = useState<number>(() => {
+    if (typeof window === "undefined") return 1
+    const stored = sessionStorage.getItem(
+      `txn_filters_${selectedAccountId}`
+    )
+    if (!stored) return 1
+    try {
+      const { page: p } = JSON.parse(stored)
+      return p ?? 1
+    } catch {
+      return 1
+    }
+  })
+  const prevAccountId = useRef<string | null>(null)
 
   const selectedAccount = accounts.find((a) => a.id === selectedAccountId)
   const currencySymbol =
@@ -25,16 +64,57 @@ export function TransactionsPanel() {
 
   const { availableMonths, mutate: mutateMonths } = useAvailableMonths(selectedAccountId)
 
-  // Reset everything on account switch
+  // Consolidated account change + restore effect
   useEffect(() => {
-    setSelectedMonth(null)
-    setFilters({})
-    setPage(1)
+    if (!selectedAccountId) return
+
+    if (prevAccountId.current && prevAccountId.current !== selectedAccountId) {
+      // Account switched — reset and clear previous account's stored filters
+      setSelectedMonth(null)
+      setFilters({})
+      setPage(1)
+      sessionStorage.removeItem(`txn_filters_${prevAccountId.current}`)
+      prevAccountId.current = selectedAccountId
+      return
+    }
+
+    if (prevAccountId.current === null) {
+      // Initial load — restore from sessionStorage
+      prevAccountId.current = selectedAccountId
+      const stored = sessionStorage.getItem(`txn_filters_${selectedAccountId}`)
+      if (stored) {
+        try {
+          const { month, filters: f, page: p } = JSON.parse(stored)
+          if (month) {
+            setSelectedMonth(month)
+            setFilters(prev => ({
+              ...prev,
+              month,
+              date_from: undefined,
+              date_to: undefined,
+            }))
+          }
+          if (f) setFilters(f)
+          if (p) setPage(p)
+        } catch {
+          sessionStorage.removeItem(`txn_filters_${selectedAccountId}`)
+        }
+      }
+    }
   }, [selectedAccountId])
+
+  // Persist filter state on change
+  useEffect(() => {
+    if (!selectedAccountId) return
+    sessionStorage.setItem(
+      `txn_filters_${selectedAccountId}`,
+      JSON.stringify({ month: selectedMonth, filters, page })
+    )
+  }, [selectedMonth, filters, page, selectedAccountId])
 
   // Default to most recent month once available months load
   useEffect(() => {
-    if (availableMonths.length > 0) {
+    if (availableMonths.length > 0 && selectedMonth === null) {
       const first = availableMonths[0].key
       setSelectedMonth(first)
       setPage(1)
