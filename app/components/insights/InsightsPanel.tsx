@@ -84,13 +84,27 @@ export function InsightsPanel() {
   const processedCallIds = useRef<Set<string>>(new Set())
   const lastTranscriptRef = useRef<string>("")
   const shouldDisconnectAfterResponse = useRef(false)
+  const awaitingFarewellResponse = useRef(false)
+  const transcriptTimer = useRef<NodeJS.Timeout | null>(null)
+  const turnsRef = useRef<ChatTurn[]>([])
+  const lastAudioScheduledEndTimeRef = useRef<number>(0)
 
   // Scroll to bottom on new turns
   useEffect(() => {
     chatBottomRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [turns])
 
+  useEffect(() => {
+    turnsRef.current = turns
+  }, [turns])
+
   const disconnectVoice = useCallback(() => {
+    if (transcriptTimer.current) {
+      clearTimeout(transcriptTimer.current)
+      transcriptTimer.current = null
+    }
+    awaitingFarewellResponse.current = false
+    shouldDisconnectAfterResponse.current = false
     wsRef.current?.close()
     wsRef.current = null
     stopMicCapture()
@@ -112,6 +126,38 @@ export function InsightsPanel() {
       setShowDateFilter(false)
       disconnectVoice()
       prevAccountId.current = selectedAccountId
+      
+      // Restore turns for the new account from sessionStorage
+      const storedTurns = sessionStorage.getItem(
+        `insights_turns_${selectedAccountId}`
+      )
+      if (storedTurns) {
+        try {
+          const parsed = JSON.parse(storedTurns) as ChatTurn[]
+          setTurns(parsed.map(t => ({ ...t, timestamp: new Date(t.timestamp) })))
+        } catch {
+          sessionStorage.removeItem(`insights_turns_${selectedAccountId}`)
+          setTurns([])
+        }
+      } else {
+        setTurns([])
+      }
+
+      // Restore date filter for new account
+      const storedFilter = sessionStorage.getItem(
+        `insights_filter_${selectedAccountId}`
+      )
+      if (storedFilter) {
+        try {
+          const { dateFrom: df, dateTo: dt, showDateFilter: show } =
+            JSON.parse(storedFilter)
+          if (df) setDateFrom(df)
+          if (dt) setDateTo(dt)
+          if (show) setShowDateFilter(show)
+        } catch {
+          sessionStorage.removeItem(`insights_filter_${selectedAccountId}`)
+        }
+      }
       return
     }
 
@@ -168,7 +214,7 @@ export function InsightsPanel() {
   }, [dateFrom, dateTo, showDateFilter, selectedAccountId])
 
   function buildHistory() {
-    return turns.map(t => ({
+    return turnsRef.current.map(t => ({
       role: t.role,
       content: t.role === "assistant" && t.intent_label
         ? `[${t.intent_label}] ${t.content}`
@@ -196,10 +242,21 @@ export function InsightsPanel() {
     ))
   }
 
+  function flushPendingUserTranscript() {
+    if (transcriptTimer.current) {
+      clearTimeout(transcriptTimer.current)
+      transcriptTimer.current = null
+    }
+    if (lastTranscriptRef.current) {
+      addTurn({ role: "user", content: lastTranscriptRef.current, type: "message" })
+    }
+  }
+
   async function handleQuery(
     q?: string,
     intentId?: string,
     skipUserTurn = false,
+    isVoice = false,
   ): Promise<string> {
     if (!selectedAccountId) return ""
     const queryText = q ?? question
@@ -217,6 +274,8 @@ export function InsightsPanel() {
       const lastAssistantTurn = [...turns]
         .reverse()
         .find(t => t.role === "assistant")
+      
+      console.log("conversation history length:", buildHistory().length)
 
       const res = await fetch("/api/insights/query", {
         method: "POST",
@@ -231,6 +290,7 @@ export function InsightsPanel() {
           last_results: lastAssistantTurn?.results ?? null,
           date_from: dateFrom || null,
           date_to: dateTo || null,
+          is_voice: isVoice,
         }),
       })
 
@@ -247,6 +307,9 @@ export function InsightsPanel() {
         const data: InsightResult = await res.json()
 
         if (data.intent === "off_topic") {
+          if (!isVoice) {
+              addTurn({ role: "assistant", content: data.response, type: "message" })
+            }
           // Don't add canned message — let voice model handle conversation naturally
           return data.response ?? ""
         }
@@ -278,16 +341,21 @@ export function InsightsPanel() {
 
       // Streaming SSE response
       const turnId = crypto.randomUUID()
-      setTurns(prev => [
-        ...prev,
-        {
-          id: turnId,
-          role: "assistant" as const,
-          content: "",
-          type: "message" as const,
-          timestamp: new Date(),
-        },
-      ])
+
+      // In voice mode, response.output_item.done adds the turn after the model
+      // speaks — skip the placeholder here to avoid an empty assistant box.
+      if (!isVoice) {
+        setTurns(prev => [
+          ...prev,
+          {
+            id: turnId,
+            role: "assistant" as const,
+            content: "",
+            type: "message" as const,
+            timestamp: new Date(),
+          },
+        ])
+      }
 
       const reader = res.body!.getReader()
       const decoder = new TextDecoder()
@@ -311,17 +379,21 @@ export function InsightsPanel() {
             const parsed = JSON.parse(payload)
 
             if (parsed.type === "metadata") {
-              updateTurn(turnId, {
-                sql: parsed.sql,
-                chart_type: parsed.chart_type,
-                results: parsed.results,
-                intent_label: parsed.intent_label,
-                intent_description: parsed.intent_description,
-                row_count: parsed.row_count,
-              })
+              if (!isVoice) {
+                updateTurn(turnId, {
+                  sql: parsed.sql,
+                  chart_type: parsed.chart_type,
+                  results: parsed.results,
+                  intent_label: parsed.intent_label,
+                  intent_description: parsed.intent_description,
+                  row_count: parsed.row_count,
+                })
+              }
             } else if (parsed.type === "text") {
               fullText += parsed.text
-              appendToTurn(turnId, parsed.text)
+              if (!isVoice) {
+                appendToTurn(turnId, parsed.text)
+              }
             } else if (parsed.type === "error") {
               setError(parsed.message)
             }
@@ -441,11 +513,17 @@ export function InsightsPanel() {
                   properties: {
                     question: {
                       type: "string",
-                      description: "The natural language financial question from the user.",
+                      description: "The raw natural language financial question from the user. Do NOT expand categories or ask for currency formatting in this string. Keep it focused exactly on what the user asked.",
                     },
                   },
                   required: ["question"],
                 },
+              },
+              {
+                type: "function",
+                name: "end_conversation",
+                description: "Call this only after the user has explicitly confirmed they don't need anything else. Do not call this on a simple 'thank you' alone — first ask if there's anything else, and only call this once they confirm they're finished.",
+                parameters: { type: "object", properties: {} },
               },
             ],
             tool_choice: "auto",
@@ -484,7 +562,7 @@ export function InsightsPanel() {
             await audioContextRef.current.resume();
           }
 
-          console.log("Audio infrastructure active. Triggering greetings...");
+          // console.log("Audio infrastructure active. Triggering greetings...");
 
           // Commit the conversational initialization turn
           ws.send(JSON.stringify({
@@ -514,7 +592,7 @@ export function InsightsPanel() {
 
       ws.onmessage = async (event) => {
         const msg = JSON.parse(event.data as string)
-        console.log("WS message:", msg.type)
+        // console.log("WS message:", msg.type)
 
         if (msg.type === "response.created") {
           isResponseInProgress.current = true
@@ -522,24 +600,77 @@ export function InsightsPanel() {
 
         if (msg.type === "response.done") {
           isResponseInProgress.current = false
-          setVoiceStatus("listening")
+
+          if (awaitingFarewellResponse.current) {
+            // This response.done is for the farewell — promote to disconnect
+            awaitingFarewellResponse.current = false
+            shouldDisconnectAfterResponse.current = true
+          }
+
+          if (shouldDisconnectAfterResponse.current) {
+            shouldDisconnectAfterResponse.current = false
+            const now = audioContextRef.current ? audioContextRef.current.currentTime : 0
+            const remainingPlayTimeMs = Math.max(0, (lastAudioScheduledEndTimeRef.current - now) * 1000)
+            setTimeout(() => {
+              disconnectVoice()
+            }, remainingPlayTimeMs + 800)
+          } else {
+            setVoiceStatus("listening")
+          }
         }
 
         if (msg.type === "input_audio_buffer.speech_started") {
+          if (transcriptTimer.current) {
+            clearTimeout(transcriptTimer.current)
+            transcriptTimer.current = null
+          }
+          lastTranscriptRef.current = ""
           setVoiceStatus("listening")
           setQuestion("")
+
+          // Interrupt client-side playback: clear future scheduling timeline
           if (audioContextRef.current) {
             nextAudioStartTime = audioContextRef.current.currentTime
+            lastAudioScheduledEndTimeRef.current = audioContextRef.current.currentTime
+          }
+
+          // Interrupt server-side: Notify OpenAI to cancel what it was just streaming
+          if (wsRef.current?.readyState === WebSocket.OPEN) {
+            wsRef.current.send(JSON.stringify({ type: "response.cancel" }))
           }
         }
 
         if (msg.type === "conversation.item.input_audio_transcription.completed") {
           if (msg.transcript?.trim()) {
-            // // Automatically commits your spoken words into a visible User chat bubble
-            // addTurn({ role: "user", content: msg.transcript, type: "message" })
-            // Store transcript but don't add turn yet — tool call handler adds it
-            // with skipUserTurn=false using the original transcript
-            setQuestion("")
+            console.log("User transcript:", msg.transcript)
+            const transcript = msg.transcript.trim()
+            const lower = transcript.toLowerCase()
+        
+
+            // Replace brittle approach with function tool call
+            // const isClosing = [
+            //   "thank you", "thanks", "goodbye", "bye", "that's all",
+            //   "that will be all", "i'm done", "im done", "no more questions",
+            //   "you can go", "see you", "cheers", "ok thanks", "okay thanks",
+            //   "great thanks", "perfect thanks", "sounds good thanks",
+            //   "have a good day", "have a great day",
+            // ].some(phrase => lower.includes(phrase))
+            // if (isClosing) {
+            //   shouldDisconnectAfterResponse.current = true
+            // }
+
+            lastTranscriptRef.current = transcript
+            setQuestion(transcript)
+
+            // After 500ms without a tool call, treat as conversational — add user bubble
+            if (transcriptTimer.current) clearTimeout(transcriptTimer.current)
+            transcriptTimer.current = setTimeout(() => {
+              transcriptTimer.current = null
+              if (lastTranscriptRef.current) {
+                addTurn({ role: "user", content: lastTranscriptRef.current, type: "message" })
+                lastTranscriptRef.current = "" // Clear it out so flushPendingUserTranscript won't re-add it
+              }
+            }, 500)
           }
         }
 
@@ -550,22 +681,78 @@ export function InsightsPanel() {
         }
 
         if (msg.type === "response.function_call_arguments.done") {
+          console.log("Tool call full message:", JSON.stringify(msg, null, 2));
+          console.log(
+            "Tool call #", 
+            processedCallIds.current.size + 1,     
+            "call_id:", msg.call_id,    
+            "question:", JSON.parse((msg.arguments as string) || "{}").question
+          );
           const callId = msg.call_id as string
 
           if (processedCallIds.current.has(callId)) return
           processedCallIds.current.add(callId)
 
-          console.log("Database tool triggered via voice:", msg.arguments)
+          // Clear conversational timer — this is an explicit tool operation
+          if (transcriptTimer.current) {
+            clearTimeout(transcriptTimer.current)
+            transcriptTimer.current = null
+          }
+
+          // Capture the transcript before flushing clears the ref
+          const rawTranscript = lastTranscriptRef.current
+          if (rawTranscript) {
+            addTurn({ role: "user", content: rawTranscript, type: "message" })
+            lastTranscriptRef.current = ""
+          }
+
+          if (msg.name === "end_conversation") {
+            if (wsRef.current?.readyState === WebSocket.OPEN) {
+              wsRef.current.send(JSON.stringify({
+                type: "conversation.item.create",
+                item: {
+                  type: "function_call_output",
+                  call_id: callId,
+                  output: JSON.stringify({ success: true }),
+                },
+              }))
+              if (!isResponseInProgress.current) {
+                wsRef.current.send(JSON.stringify({ type: "response.create" }))
+                isResponseInProgress.current = true
+              }
+            }
+            awaitingFarewellResponse.current = true
+            return
+          }
+
+          // Cancel conversational timer — this is a data query, not a conversational turn
+          if (transcriptTimer.current) {
+            clearTimeout(transcriptTimer.current)
+            transcriptTimer.current = null
+          }
+
           try {
             const args = JSON.parse(msg.arguments as string) as { question: string }
 
+            const reformulated = args.question?.trim()
+            const rawTranscript = lastTranscriptRef.current
+
+            if (!reformulated) {
+              console.warn("Tool call returned empty/missing question, falling back to raw transcript:", msg)
+            }
+
+            const queryQuestion = reformulated || rawTranscript
+
             // Use original transcript, not model's reformulation
-            const originalQuestion = lastTranscriptRef.current || args.question
+            // const originalQuestion = lastTranscriptRef.current || args.question
             lastTranscriptRef.current = ""
             setQuestion("")
 
-            // skipUserTurn=false — handleQuery adds user bubble with original question
-            const resultSummary = await handleQuery(originalQuestion, undefined, false)
+            // Send the model's reformulated question, not the raw transcript —
+            // the model resolves follow-ups/category context (e.g. "yes, check
+            // April" -> "How much did I spend on food in April 2026?") using its
+            // own conversation context, which the raw transcript alone doesn't carry.
+            const resultSummary = await handleQuery(queryQuestion, undefined, true, true)
 
             if (wsRef.current?.readyState === WebSocket.OPEN) {
               wsRef.current.send(JSON.stringify({
@@ -589,23 +776,38 @@ export function InsightsPanel() {
         }
 
         if (msg.type === "response.output_item.done" && msg.item?.role === "assistant") {
-          if (isLoading) return;
+          console.log("ASSISTANT OUTPUT ITEM STRUCT:", JSON.stringify(msg.item, null, 2))
 
-          const contentBlock = msg.item.content?.find((c: any) => c.type === "text" || c.type === "audio")
-          const textContent = contentBlock?.text || msg.item.status_details?.text || ""
-          
-          // Exclude the initial welcome greeting and empty strings
-          if (textContent && !textContent.includes("Hello")) {
-            addTurn({
-              role: "assistant",
-              content: textContent,
-              type: "message"
+          // Aggressively grab ANY text or transcript block across the entire array content stack
+          // This bypasses the structural 'type' string gate completely (output_text, output_audio, text, audio)
+          const textContent = msg.item.content
+            ?.map((c: any) => c.text ?? c.transcript ?? "")
+            .join("")
+            .trim()
+
+          // Separate tool function markers from conversational phrases
+          const hasFunctionCall = msg.item.content?.some((c: any) => c.type === "function_call")
+
+          // Only skip if it is a naked database tool trigger execution frame with no dialogue text
+          if (hasFunctionCall && !textContent) {
+            // console.log("Skipping pure background database transaction asset frame.")
+            return
+          }
+
+          // Safely render the greetings, transitions, summaries, or endings on-screen
+          if (textContent) {
+            addTurn({ 
+              role: "assistant", 
+              content: textContent, 
+              type: "message" 
             })
           }
         }
 
         if (msg.type === "response.output_audio.delta" && audioContextRef.current) {
-          console.log("AUDIO DELTA RECEIVED");
+          // If audio output is explicitly toggled off by the user, ignore playout pipelines
+          if (!audioEnabled) return
+          
           setVoiceStatus("speaking")
           const audioBuffer = Uint8Array.from(
             atob(msg.delta as string), c => c.charCodeAt(0)
@@ -628,6 +830,7 @@ export function InsightsPanel() {
           const startTime = Math.max(ctx.currentTime, nextAudioStartTime)
           source.start(startTime)
           nextAudioStartTime = startTime + buffer.duration
+          lastAudioScheduledEndTimeRef.current = nextAudioStartTime
         }
 
         if (msg.type === "error") {
@@ -919,18 +1122,20 @@ export function InsightsPanel() {
         )}
 
         <div className="flex gap-2">
-          {/* Audio toggle */}
-          <button
-            onClick={() => setAudioEnabled(prev => !prev)}
-            className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full border transition-colors ${
-              audioEnabled
-                ? "border-primary bg-primary/10 text-primary"
-                : "border-border bg-background text-muted-foreground hover:text-foreground"
-            }`}
-            title={audioEnabled ? "Disable audio response" : "Enable audio response"}
-          >
-            {audioEnabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
-          </button>
+          {/* Audio toggle — only relevant when voice is not active */}
+          {!isVoiceConnected && (
+            <button
+              onClick={() => setAudioEnabled(prev => !prev)}
+              className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full border transition-colors ${
+                audioEnabled
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-border bg-background text-muted-foreground hover:text-foreground"
+              }`}
+              title={audioEnabled ? "Disable audio response" : "Enable audio response"}
+            >
+              {audioEnabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+            </button>
+          )}
 
           {/* Voice connect/disconnect */}
           <button

@@ -126,40 +126,63 @@ type HistoryEntry = { role: string; content: string }
 async function classifyIntent(
   question: string,
   knownIntent: string | null,
+  history: HistoryEntry[] = [],
 ): Promise<{
   intent: string
   is_off_topic: boolean
   is_display_command: boolean
 }> {
-  if (knownIntent && INTENTS[knownIntent as keyof typeof INTENTS]) {
-    return { intent: knownIntent, is_off_topic: false, is_display_command: false }
-  }
+    if (knownIntent && INTENTS[knownIntent as keyof typeof INTENTS]) {
+        return { intent: knownIntent, is_off_topic: false, is_display_command: false }
+      }
 
-  const stream = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
-    temperature: 0,
-    stream: true,
-    user: "oikos-ledger",
-    messages: [
-      {
-        role: "system",
-        content: `Classify this user query into exactly one category.
-Note: this may be a voice query so be lenient with casual phrasing — if it COULD relate to personal finance, classify it as finance_custom rather than off_topic.
+      // Last few turns only — enough to resolve a follow-up reference,
+      // not so much that a stale topic or a closed-off exchange biases
+      // classification of the current question.
+      const recentHistory = history.slice(-6)
+      const historyContext = recentHistory.length > 0
+        ? `\nRecent conversation (most recent last):\n${recentHistory
+            .map(h => `${h.role}: ${h.content}`)
+            .join("\n")}\n`
+        : ""
 
-- monthly_trend: asking to SEE or PLOT spending over time
-- biggest_expenses: asking about largest expenses
-- credits_vs_debits: asking about income vs spending
-- top_merchants: asking about where money was spent
-- spending_by_category: asking about category breakdown
-- finance_custom: any question that could relate to personal finance, transactions, spending, balances, merchants, unusual activity, alerts, or account summaries. When in doubt, use this.
-- display_command: requests to change visualization ("re-plot", "show as pie", "use bar chart")
-- off_topic: ONLY if clearly unrelated to finance (weather, sports, jokes, cooking)
+      const stream = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        temperature: 0,
+        stream: true,
+        user: "oikos-ledger",
+        messages: [
+          {
+            role: "system",
+            content: `Classify the CURRENT user query into exactly one category.
+    Note: this may be a voice query so be lenient with casual phrasing — if it COULD relate to personal finance, classify it as finance_custom rather than off_topic.
 
-Return ONLY the category name, nothing else.`,
-      },
-      { role: "user", content: question },
-    ],
-  })
+    The current query may be a short follow-up, refinement, or affirmation
+    that only makes sense in light of the recent conversation below. Use that
+    context to resolve what the query is actually asking before classifying.
+    Examples:
+    - Recent: "assistant: You spent ₹6,900 on food in April 2026."
+      Current: "What about May?"
+      Correct: finance_custom (a date-range follow-up, not off_topic)
+    - Recent: "user: Show me top merchants"
+      Current: "Only food ones"
+      Correct: finance_custom (refining the prior finance question)
+    ${historyContext}
+    Categories:
+    - monthly_trend: asking to SEE or PLOT spending over time
+    - biggest_expenses: asking about largest expenses
+    - credits_vs_debits: asking about income vs spending
+    - top_merchants: asking about where money was spent
+    - spending_by_category: asking about category breakdown
+    - finance_custom: any question that could relate to personal finance, transactions, spending, balances, merchants, unusual activity, alerts, or account summaries. When in doubt, or when the current query is a follow-up/refinement of a recent finance question, use this.
+    - display_command: requests to change visualization ("re-plot", "show as pie", "use bar chart")
+    - off_topic: ONLY if the current query, read together with recent context, is clearly unrelated to finance (weather, sports, jokes, cooking)
+
+    Return ONLY the category name, nothing else.`,
+          },
+          { role: "user", content: question },
+        ],
+      })
 
   let classification = ""
   for await (const chunk of stream) {
@@ -172,6 +195,22 @@ Return ONLY the category name, nothing else.`,
     is_off_topic: classification === "off_topic",
     is_display_command: classification === "display_command",
   }
+}
+
+function normalizeForCompare(text: string): string {
+  return text.toLowerCase().trim().replace(/[?!.,]/g, "").replace(/\s+/g, " ")
+}
+
+function dedupeConsecutive(history: HistoryEntry[]): HistoryEntry[] {
+  const deduped: HistoryEntry[] = []
+  for (const entry of history) {
+    const prev = deduped[deduped.length - 1]
+    const isRepeat = prev
+      && prev.role === entry.role
+      && normalizeForCompare(prev.content) === normalizeForCompare(entry.content)
+    if (!isRepeat) deduped.push(entry)
+  }
+  return deduped
 }
 
 async function hashQuery(text: string): Promise<string> {
@@ -360,6 +399,20 @@ what the user is asking. Examples:
   Current: "Only show food ones"
   Correct: Same query but add AND category = 'Food'
 
+IMPORTANT: If the current question is a very short affirmation ("yeah",
+"yes", "do it", "do that", "go ahead", "sure", "ok", "okay", "sounds good",
+"great", "perfect", "alright"), look at the conversation history to understand
+what was being discussed and generate SQL for THAT topic.
+Do not generate unrelated SQL.
+If the context is still unclear, generate:
+SELECT 'Please clarify your question' AS message
+
+IMPORTANT: Ignore any part of the question that asks about output
+formatting or presentation — e.g. "include the currency", "show the
+date range used", "give me a summary". Currency and date context are
+handled separately. Only generate SQL for the underlying data the user
+actually wants (the amount, category, etc.).
+
 ${historyContext}${dateContext}
 Table: transactions
 Columns:
@@ -379,6 +432,9 @@ Rules:
 - Never use DROP, DELETE, UPDATE, INSERT, TRUNCATE, ALTER
 - Add LIMIT 100 unless aggregating
 - Use TO_CHAR(transaction_date, 'YYYY-MM') for month grouping
+- CRITICAL: DO NOT include the 'currency' column in your SELECT clause under any circumstances unless explicity asked for.
+- CRITICAL: If you select any unaggregated columns alongside an aggregate (like SUM(amount)), you MUST include every unaggregated column in a GROUP BY clause to ensure it runs cleanly on PostgreSQL.
+- CRITICAL: Stick strictly to what the user explicitly asked for. Do not expand broad words like "food" into a manual array of sub-categories like ('Groceries', 'Restaurants', 'Delivery', 'Cafes'). If the user asks for food, query: ILIKE '%food%' or category = 'Food'.
 - Return ONLY the SQL, no explanation, no markdown`,
       },
       { role: "user", content: question },
@@ -409,6 +465,7 @@ export async function POST(request: Request) {
     last_results,
     date_from,
     date_to,
+    is_voice,
   } = body
 
   if (!account_id) {
@@ -416,6 +473,8 @@ export async function POST(request: Request) {
   }
 
   const userId = session.user.id
+
+  const dedupedHistory = dedupeConsecutive(conversation_history ?? [])
 
   const dateFilter = [
     date_from ? `AND transaction_date >= '${date_from}'` : "",
@@ -427,7 +486,7 @@ export async function POST(request: Request) {
     : ""
 
   // Step 1: Classify intent
-  const classification = await classifyIntent(question, intent)
+  const classification = await classifyIntent(question, intent, dedupedHistory)
 
   console.log("classification:", classification)
   console.log("date_from:", date_from)
@@ -499,7 +558,8 @@ export async function POST(request: Request) {
   const similarHits = await getSimilarCacheHits(
     userId, account_id, embedding, queryHash,
   )
-  if (similarHits.length > 0) {
+  if (!is_voice && similarHits.length > 0) {
+    console.log("is_voice:", is_voice, "similar hits:", similarHits.length)
     return Response.json({
       type: "suggestions",
       question: question || intent,
@@ -525,7 +585,7 @@ export async function POST(request: Request) {
     intentDescription = intentConfig.description
   } else {
     querySQL = await generateSQL(
-      question, userId, account_id, conversation_history ?? [], dateContext,
+      question, userId, account_id, dedupedHistory, dateContext,
     )
 
     const validation = validateSQL(querySQL)
@@ -752,6 +812,7 @@ Summarize these results accurately.`,
       },
     })
   } catch (error) {
+    console.error("Query execution failed. SQL was:\n", querySQL, "\nError:", error)
     return Response.json(
       { error: "Query execution failed", detail: String(error) },
       { status: 500 },
