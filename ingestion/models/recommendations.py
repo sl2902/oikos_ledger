@@ -106,7 +106,7 @@ class Recommendation(SQLModel, table=True):
 class QueryCache(SQLModel, table=True):
     __tablename__ = "query_cache"
     __table_args__ = (
-        UniqueConstraint("user_id", "query_hash", name="uq_query_cache_user_query"),
+        UniqueConstraint("user_id", "account_id", "query_hash", name="uq_query_account_cache_user_query"),
     )
 
     id: uuid.UUID = Field(
@@ -114,10 +114,11 @@ class QueryCache(SQLModel, table=True):
         sa_column=Column(sa.UUID, primary_key=True, server_default=text("gen_random_uuid()")),
     )
     user_id: uuid.UUID = Field(foreign_key="users.id")
+    account_id: uuid.UUID = Field(foreign_key="bank_accounts.id")
     query_hash: str
     query_text: str
     query_embedding: List[float] = Field(
-        sa_column=Column("query_embedding", Vector(1536), nullable=False)
+        sa_column=Column("query_embedding", Vector(1536), nullable=True)
     )
     result: Dict[str, Any] = Field(
         sa_column=Column("result", JSONB, nullable=False)

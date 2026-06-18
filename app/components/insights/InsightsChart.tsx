@@ -38,22 +38,37 @@ export function InsightsChart({ chartType, data }: Props) {
     return result
   })
 
-  if (chartType === "line") {
-    const xKey = data[0] && "day" in data[0]
-      ? "day"
-      : data[0] && "week" in data[0]
-      ? "week"
-      : "month"
-    const allValues = normalizedData.flatMap(d => [
-      Number(d.debits ?? 0),
-      Number(d.credits ?? 0),
-    ]).filter(v => v > 0)
+  // Single data point on a line chart renders invisible — use bar instead
+  const activeChartType = (chartType === "line" && normalizedData.length === 1)
+    ? "bar"
+    : chartType
 
-    const p95 = allValues.sort((a, b) => a - b)[
+  if (activeChartType === "line") {
+    const allKeys = data[0] ? Object.keys(data[0]) : []
+    const xKey = allKeys.find(k =>
+      ["day", "week", "month"].includes(k) ||
+      k.includes("day") || k.includes("week") ||
+      k.includes("month") || k.includes("date")
+    ) ?? allKeys[0] ?? "month"
+
+    // Find all numeric value columns (exclude the time axis key)
+    const valueKeys = Object.keys(normalizedData[0] ?? {}).filter(k =>
+      k !== xKey &&
+      k !== "net" &&
+      normalizedData.every(d => d[k] !== null && !isNaN(Number(d[k])))
+    )
+
+    const allValues = normalizedData.flatMap(d =>
+      valueKeys.map(k => Number(d[k] ?? 0))
+    ).filter(v => v > 0)
+
+    const p95 = [...allValues].sort((a, b) => a - b)[
       Math.floor(allValues.length * 0.95)
     ] ?? 0
 
     const yDomain: [number, number] = [0, p95 * 1.1]
+
+    const LINE_COLORS = ["#ef4444", "#10b981", "#6366f1", "#f59e0b"]
 
     return (
       <ResponsiveContainer width="100%" height={280}>
@@ -63,14 +78,23 @@ export function InsightsChart({ chartType, data }: Props) {
           <YAxis tickFormatter={formatAmount} tick={{ fontSize: 11 }} domain={yDomain} />
           <Tooltip formatter={(v) => formatAmount(v)} />
           <Legend />
-          <Line type="monotone" dataKey="debits" stroke="#ef4444" name="Debits" dot={false} />
-          <Line type="monotone" dataKey="credits" stroke="#10b981" name="Credits" dot={false} />
+          {valueKeys.map((key, i) => (
+            <Line
+              key={key}
+              type="monotone"
+              dataKey={key}
+              stroke={LINE_COLORS[i % LINE_COLORS.length]}
+              name={key.replace(/_/g, " ")}
+              dot={false}
+              connectNulls={true}
+            />
+          ))}
         </LineChart>
       </ResponsiveContainer>
     )
   }
 
-  if (chartType === "bar") {
+  if (activeChartType === "bar") {
     const dataKey = data[0]
       ? Object.keys(data[0]).find(k => k === "total" || k === "amount") ?? "total"
       : "total"
@@ -101,7 +125,7 @@ export function InsightsChart({ chartType, data }: Props) {
     )
   }
 
-  if (chartType === "horizontal_bar") {
+  if (activeChartType === "horizontal_bar") {
     const dataKey = data[0]
       ? Object.keys(data[0]).find(k => k === "total" || k === "amount") ?? "total"
       : "total"
@@ -128,7 +152,7 @@ export function InsightsChart({ chartType, data }: Props) {
     )
   }
 
-  if (chartType === "comparison_bar") {
+  if (activeChartType === "comparison_bar") {
     return (
       <ResponsiveContainer width="100%" height={280}>
         <BarChart data={normalizedData}>
@@ -144,7 +168,7 @@ export function InsightsChart({ chartType, data }: Props) {
     )
   }
 
-  if (chartType === "pie") {
+  if (activeChartType === "pie") {
     return (
       <ResponsiveContainer width="100%" height={280}>
         <PieChart>
@@ -160,7 +184,7 @@ export function InsightsChart({ chartType, data }: Props) {
             //   `${category} ${(percentage).toFixed(1)}%`
             // }
           >
-            
+
             {normalizedData.map((_, i) => (
               <Cell key={i} fill={COLORS[i % COLORS.length]} />
             ))}

@@ -10,9 +10,6 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 })
 
-const OFF_TOPIC_RESPONSE =
-  "I can only answer questions about your transactions and spending. Try asking about your top merchants, monthly trends, or spending by category."
-
 const BLOCKED_KEYWORDS = [
   "drop", "delete", "update", "insert", "truncate",
   "alter", "create", "grant", "revoke", "exec",
@@ -122,80 +119,6 @@ const INTENTS = {
 }
 
 type HistoryEntry = { role: string; content: string }
-
-async function classifyIntent(
-  question: string,
-  knownIntent: string | null,
-  history: HistoryEntry[] = [],
-): Promise<{
-  intent: string
-  is_off_topic: boolean
-  is_display_command: boolean
-}> {
-    if (knownIntent && INTENTS[knownIntent as keyof typeof INTENTS]) {
-        return { intent: knownIntent, is_off_topic: false, is_display_command: false }
-      }
-
-      // Last few turns only — enough to resolve a follow-up reference,
-      // not so much that a stale topic or a closed-off exchange biases
-      // classification of the current question.
-      const recentHistory = history.slice(-6)
-      const historyContext = recentHistory.length > 0
-        ? `\nRecent conversation (most recent last):\n${recentHistory
-            .map(h => `${h.role}: ${h.content}`)
-            .join("\n")}\n`
-        : ""
-
-      const stream = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        temperature: 0,
-        stream: true,
-        user: "oikos-ledger",
-        messages: [
-          {
-            role: "system",
-            content: `Classify the CURRENT user query into exactly one category.
-    Note: this may be a voice query so be lenient with casual phrasing — if it COULD relate to personal finance, classify it as finance_custom rather than off_topic.
-
-    The current query may be a short follow-up, refinement, or affirmation
-    that only makes sense in light of the recent conversation below. Use that
-    context to resolve what the query is actually asking before classifying.
-    Examples:
-    - Recent: "assistant: You spent ₹6,900 on food in April 2026."
-      Current: "What about May?"
-      Correct: finance_custom (a date-range follow-up, not off_topic)
-    - Recent: "user: Show me top merchants"
-      Current: "Only food ones"
-      Correct: finance_custom (refining the prior finance question)
-    ${historyContext}
-    Categories:
-    - monthly_trend: asking to SEE or PLOT spending over time
-    - biggest_expenses: asking about largest expenses
-    - credits_vs_debits: asking about income vs spending
-    - top_merchants: asking about where money was spent
-    - spending_by_category: asking about category breakdown
-    - finance_custom: any question that could relate to personal finance, transactions, spending, balances, merchants, unusual activity, alerts, or account summaries. When in doubt, or when the current query is a follow-up/refinement of a recent finance question, use this.
-    - display_command: requests to change visualization ("re-plot", "show as pie", "use bar chart")
-    - off_topic: ONLY if the current query, read together with recent context, is clearly unrelated to finance (weather, sports, jokes, cooking)
-
-    Return ONLY the category name, nothing else.`,
-          },
-          { role: "user", content: question },
-        ],
-      })
-
-  let classification = ""
-  for await (const chunk of stream) {
-    classification += chunk.choices[0]?.delta?.content ?? ""
-  }
-  classification = classification.trim().toLowerCase()
-
-  return {
-    intent: classification,
-    is_off_topic: classification === "off_topic",
-    is_display_command: classification === "display_command",
-  }
-}
 
 function normalizeForCompare(text: string): string {
   return text.toLowerCase().trim().replace(/[?!.,]/g, "").replace(/\s+/g, " ")
@@ -366,55 +289,24 @@ function validateSQL(query: string): { valid: boolean; reason?: string } {
   return { valid: true }
 }
 
-async function generateSQL(
-  question: string,
+const AGENT_SYSTEM_PROMPT = (
   userId: string,
   accountId: string,
-  history: HistoryEntry[] = [],
-  dateContext = "",
-): Promise<string> {
-  const historyContext = history.length > 0
-    ? `\nConversation history:\n${history
-        .map(h => `${h.role}: ${h.content}`)
-        .join("\n")}\n`
-    : ""
+  currency: string,
+  dateContext: string,
+) => {
+  const today = new Date().toISOString().split("T")[0]
+  const currentYear = today.slice(0, 4)
+  return `You are a personal finance assistant for an app called Oikos Ledger. You have access to the user's transaction data via the run_sql tool.
 
-  const stream = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
-    temperature: 0,
-    stream: true,
-    user: "oikos-ledger",
-    messages: [
-      {
-        role: "system",
-        content: `You are a PostgreSQL query generator for a personal finance app.
+Today's date is ${today}. The current year is ${currentYear}.
+When the user refers to a month by name only (e.g. "March",
+"last month"), ALWAYS use ${currentYear} unless a different
+year is explicitly stated by the user.
 
-IMPORTANT: If conversation history is provided, the current question
-may be a follow-up or refinement. Use the full context to understand
-what the user is asking. Examples:
-- Previous: "What is my favorite food app?"
-  Current: "I meant with respect to spending"
-  Correct: TOP merchants WHERE category = 'Food' ORDER BY SUM(amount) DESC
-- Previous: "Show me top merchants"
-  Current: "Only show food ones"
-  Correct: Same query but add AND category = 'Food'
+${dateContext ? `Active date filter: ${dateContext}` : ""}
 
-IMPORTANT: If the current question is a very short affirmation ("yeah",
-"yes", "do it", "do that", "go ahead", "sure", "ok", "okay", "sounds good",
-"great", "perfect", "alright"), look at the conversation history to understand
-what was being discussed and generate SQL for THAT topic.
-Do not generate unrelated SQL.
-If the context is still unclear, generate:
-SELECT 'Please clarify your question' AS message
-
-IMPORTANT: Ignore any part of the question that asks about output
-formatting or presentation — e.g. "include the currency", "show the
-date range used", "give me a summary". Currency and date context are
-handled separately. Only generate SQL for the underlying data the user
-actually wants (the amount, category, etc.).
-
-${historyContext}${dateContext}
-Table: transactions
+Database table: transactions
 Columns:
   - transaction_date (date)
   - normalized_merchant (text)
@@ -426,26 +318,230 @@ Columns:
   - closing_balance (numeric, nullable)
   - currency (text)
 
-Rules:
-- Only SELECT queries
-- Always include WHERE user_id = '${userId}' AND account_id = '${accountId}'
-- Never use DROP, DELETE, UPDATE, INSERT, TRUNCATE, ALTER
-- Add LIMIT 100 unless aggregating
-- Use TO_CHAR(transaction_date, 'YYYY-MM') for month grouping
-- CRITICAL: DO NOT include the 'currency' column in your SELECT clause under any circumstances unless explicity asked for.
-- CRITICAL: If you select any unaggregated columns alongside an aggregate (like SUM(amount)), you MUST include every unaggregated column in a GROUP BY clause to ensure it runs cleanly on PostgreSQL.
-- CRITICAL: Stick strictly to what the user explicitly asked for. Do not expand broad words like "food" into a manual array of sub-categories like ('Groceries', 'Restaurants', 'Delivery', 'Cafes'). If the user asks for food, query: ILIKE '%food%' or category = 'Food'.
-- Return ONLY the SQL, no explanation, no markdown`,
+SQL Rules (always enforced):
+  - Only SELECT queries
+  - Always include:
+    WHERE user_id = '${userId}' AND account_id = '${accountId}'
+  - Never use DROP, DELETE, UPDATE, INSERT, TRUNCATE, ALTER
+  - Add LIMIT 100 unless aggregating
+  - Use TO_CHAR(transaction_date, 'YYYY-MM') for month grouping
+  - DO NOT include 'currency' in SELECT unless explicitly asked
+  - Use ILIKE '%value%' for merchant/category text matching
+  - Do NOT expand category words into sub-arrays
+  - If joining unaggregated columns with aggregates, include
+    all unaggregated columns in GROUP BY
+  - CRITICAL: Always alias time columns as EXACTLY 'day', 'week',
+  or 'month' with no exceptions:
+  TO_CHAR(transaction_date, 'YYYY-MM-DD') AS day
+  TO_CHAR(transaction_date, 'YYYY-WW') AS week  
+  TO_CHAR(transaction_date, 'YYYY-MM') AS month
+  Never use 'transaction_day', 'transaction_date', 'order_date'
+  or any other alias for time columns.
+- Always alias value columns as exactly 'total' or 'amount':
+  SUM(amount) AS total
+  Never use 'total_amount', 'sum_amount', or other variants.
+- "payment method" refers to how a transaction was made (UPI,
+  NEFT, IMPS, cash etc.) — this is NOT a column in the database.
+  If the user asks about payment method, explain that this
+  information is not available in the transaction data, and
+  offer to break down by merchant or category instead.
+
+Behaviour:
+  - Use run_sql when the user asks about their financial data
+  - If the question is a follow-up, use conversation history
+    to carry forward all relevant filters (merchant, category,
+    date range) unless the user explicitly changes them
+  - If the question is ambiguous and context doesn't resolve
+    it, respond directly with a short clarifying question
+    (do NOT call run_sql)
+  - If the question is clearly unrelated to personal finance,
+    respond directly: "I can only answer questions about your transactions and spending."
+  - Keep all direct responses to 1-2 sentences
+  - Always use ${currency} for currency amounts
+  - Lead with the answer, never repeat the question back`
+}
+
+type AgentResult =
+  | { type: "sql_result"; sql: string; rows: Record<string, unknown>[]; summary: string; chartType: string }
+  | { type: "direct_response"; response: string }
+
+async function runAgentLoop(
+  question: string,
+  userId: string,
+  accountId: string,
+  history: HistoryEntry[],
+  dateContext: string,
+  currency: string,
+): Promise<AgentResult> {
+  const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
+    {
+      role: "system",
+      content: AGENT_SYSTEM_PROMPT(userId, accountId, currency, dateContext),
+    },
+    ...history.map(h => ({
+      role: h.role as "user" | "assistant",
+      content: h.content,
+    })),
+    { role: "user", content: question },
+  ]
+
+  const tools: OpenAI.Chat.ChatCompletionTool[] = [
+    {
+      type: "function",
+      function: {
+        name: "run_sql",
+        description: "Execute a SELECT query against the user's transactions",
+        parameters: {
+          type: "object" as const,
+          properties: {
+            sql: {
+              type: "string",
+              description: "The PostgreSQL SELECT query to execute",
+            },
+            chart_type: {
+              type: "string",
+              enum: ["line", "bar", "horizontal_bar", "comparison_bar", "pie", "table", "none"],
+              description: `Pick the best visualization for the query result:
+- line: time series with one numeric value (day/week/month + total)
+- bar: category or merchant ranked by total (vertical)
+- horizontal_bar: top merchants or long category names (horizontal)
+- comparison_bar: two numeric values per time period (debits vs credits)
+- pie: category breakdown with percentages
+- table: multi-dimension results, text-heavy, or anything else
+- none: single scalar value (one number answer)`,
+            },
+          },
+          required: ["sql", "chart_type"],
+        },
       },
-      { role: "user", content: question },
-    ],
+    },
+  ]
+
+  // First LLM call — may or may not call the tool
+  let firstResponse = ""
+  let toolCallId = ""
+  let toolCallArgs = ""
+  let toolCallName = ""
+
+  const firstStream = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    temperature: 0,
+    stream: true,
+    user: "oikos-ledger",
+    messages,
+    tools,
+    tool_choice: "auto",
   })
 
-  let sqlText = ""
-  for await (const chunk of stream) {
-    sqlText += chunk.choices[0]?.delta?.content ?? ""
+  for await (const chunk of firstStream) {
+    const delta = chunk.choices[0]?.delta
+    if (delta?.content) {
+      firstResponse += delta.content
+    }
+    if (delta?.tool_calls?.[0]) {
+      const tc = delta.tool_calls[0]
+      if (tc.id) toolCallId = tc.id
+      if (tc.function?.name) toolCallName = tc.function.name
+      if (tc.function?.arguments) toolCallArgs += tc.function.arguments
+    }
   }
-  return sqlText.trim()
+
+  // No tool call — direct response (clarification or off-topic)
+  if (!toolCallId || toolCallName !== "run_sql") {
+    console.log("Agent direct response:", firstResponse.trim())
+    return { type: "direct_response", response: firstResponse.trim() }
+  }
+
+  // Parse and validate SQL
+  let parsedSQL = ""
+  let inferredAgentChart = ""
+  try {
+    const parsed = JSON.parse(toolCallArgs) as { sql: string; chart_type?: string }
+    parsedSQL = parsed.sql?.trim() ?? ""
+    inferredAgentChart = parsed.chart_type?.trim().toLowerCase() ?? ""
+    console.log("tool args parsed:", JSON.stringify({ parsedSQL: parsedSQL.slice(0, 80), chart_type: inferredAgentChart }))
+    console.log("agent SQL:", parsedSQL, "Agent structural chart:", inferredAgentChart)
+  } catch {
+    return {
+      type: "direct_response",
+      response: "I had trouble generating the query. Could you rephrase?",
+    }
+  }
+
+  const validation = validateSQL(parsedSQL)
+  if (!validation.valid) {
+    return {
+      type: "direct_response",
+      response: "I can only run SELECT queries on your transaction data.",
+    }
+  }
+
+  if (!parsedSQL.toLowerCase().includes("limit")) {
+    parsedSQL = `${parsedSQL.replace(/;+$/, "")} LIMIT 100`
+  }
+
+  // Execute SQL
+  const results = (await db.execute(
+    sql.raw(parsedSQL),
+  )) as unknown as { rows: Record<string, unknown>[] }
+  const rows = results.rows ?? []
+
+  // Second LLM call — synthesize result
+  const toolResultMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
+    ...messages,
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: toolCallId,
+          type: "function" as const,
+          function: { name: "run_sql", arguments: toolCallArgs },
+        },
+      ],
+    },
+    {
+      role: "tool",
+      tool_call_id: toolCallId,
+      content: JSON.stringify({ rows: rows.slice(0, 20) }),
+    },
+  ]
+
+  const totalDebits = rows.reduce((sum, r) => sum + Number(r.debits ?? 0), 0)
+  const totalCredits = rows.reduce((sum, r) => sum + Number(r.credits ?? 0), 0)
+  const inferredChartType = inferredAgentChart || "table"
+
+  const synthesisMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
+    ...toolResultMessages,
+    {
+      role: "user",
+      content: `Summarize the results in 1-2 sentences.
+The data is being rendered as a "${inferredChartType}" in the UI.
+${totalDebits > 0 || totalCredits > 0 ? `Pre-computed totals — debits: ${totalDebits.toFixed(2)}, credits: ${totalCredits.toFixed(2)}` : ""}
+Lead with the answer. Use ${currency} for amounts.`,
+    },
+  ]
+
+  let summary = ""
+  const synthesisStream = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    temperature: 0.3,
+    stream: true,
+    user: "oikos-ledger",
+    messages: synthesisMessages,
+  })
+
+  for await (const chunk of synthesisStream) {
+    summary += chunk.choices[0]?.delta?.content ?? ""
+  }
+
+  return {
+    type: "sql_result",
+    sql: parsedSQL,
+    rows,
+    summary: summary.trim(),
+    chartType: inferredChartType,
+  }
 }
 
 export async function POST(request: Request) {
@@ -485,60 +581,51 @@ export async function POST(request: Request) {
     ? `\nDate filter active: ${date_from ? `from ${date_from}` : ""} ${date_to ? `to ${date_to}` : ""}. Always apply this filter to all queries.\n`
     : ""
 
-  // Step 1: Classify intent
-  const classification = await classifyIntent(question, intent, dedupedHistory)
-
-  console.log("classification:", classification)
   console.log("date_from:", date_from)
   console.log("date_to:", date_to)
   console.log("dateFilter:", dateFilter)
 
-  // Step 2: Reject off-topic queries
-  if (classification.is_off_topic) {
-    return Response.json({
-      type: "complete",
-      question,
-      intent: "off_topic",
-      intent_label: "Off topic",
-      intent_description: "",
-      is_custom: false,
-      sql: "",
-      results: [],
-      response: OFF_TOPIC_RESPONSE,
-      chart_type: "none",
-      row_count: 0,
-      cached: false,
-    })
-  }
-
-  // Step 3: Handle display commands — re-plot without re-querying
-  if (classification.is_display_command) {
+  // Display command — re-plot without re-querying
+  if (question && last_results && last_results.length > 0) {
     const q = question.toLowerCase()
-    let newChartType = last_chart_type ?? "table"
+    const hasDisplayPhrase = (
+      q.includes("re-plot") || q.includes("replot") ||
+      (q.includes("show") && q.includes("as")) ||
+      q.includes("switch to") ||
+      q.includes("change to") ||
+      (q.includes("use") && (q.includes("pie chart") || q.includes("bar chart") || q.includes("line chart")))
+    )
+    const hasChartKeyword = (
+      q.includes("pie") || q.includes("donut") ||
+      q.includes("bar") || q.includes("line") || q.includes("table")
+    )
 
-    if (q.includes("pie") || q.includes("donut")) newChartType = "pie"
-    else if (q.includes("bar") && q.includes("horizontal")) newChartType = "horizontal_bar"
-    else if (q.includes("bar")) newChartType = "bar"
-    else if (q.includes("line")) newChartType = "line"
-    else if (q.includes("table")) newChartType = "table"
+    if (hasDisplayPhrase && hasChartKeyword) {
+      let newChartType = last_chart_type ?? "table"
+      if (q.includes("pie") || q.includes("donut")) newChartType = "pie"
+      else if (q.includes("bar") && q.includes("horizontal")) newChartType = "horizontal_bar"
+      else if (q.includes("bar")) newChartType = "bar"
+      else if (q.includes("line")) newChartType = "line"
+      else if (q.includes("table")) newChartType = "table"
 
-    return Response.json({
-      type: "complete",
-      question,
-      intent: "display_command",
-      intent_label: "Display update",
-      intent_description: "Chart type changed",
-      is_custom: false,
-      sql: "",
-      results: last_results ?? [],
-      response: "Here's the data re-plotted as requested.",
-      chart_type: newChartType,
-      row_count: (last_results ?? []).length,
-      cached: false,
-    })
+      return Response.json({
+        type: "complete",
+        question,
+        intent: "display_command",
+        intent_label: "Display update",
+        intent_description: "Chart type changed",
+        is_custom: false,
+        sql: "",
+        results: last_results ?? [],
+        response: "Here's the data re-plotted as requested.",
+        chart_type: newChartType,
+        row_count: (last_results ?? []).length,
+        cached: false,
+      })
+    }
   }
 
-  // Step 4: Two-tier cache lookup
+  // Two-tier cache lookup
   const cacheText = intent
     ? `intent:${intent}:${date_from ?? ""}:${date_to ?? ""}`
     : question ?? ""
@@ -555,9 +642,7 @@ export async function POST(request: Request) {
   const embedding = await generateEmbedding(cacheText)
 
   // Tier 2: similarity search
-  const similarHits = await getSimilarCacheHits(
-    userId, account_id, embedding, queryHash,
-  )
+  const similarHits = await getSimilarCacheHits(userId, account_id, embedding, queryHash)
   if (!is_voice && similarHits.length > 0) {
     console.log("is_voice:", is_voice, "similar hits:", similarHits.length)
     return Response.json({
@@ -569,175 +654,150 @@ export async function POST(request: Request) {
     })
   }
 
-  // Step 5: Execute query
-  let querySQL: string
-  let chartType: string
-  let intentLabel: string
-  let intentDescription: string
-  const isCustom = !intent || !INTENTS[intent as keyof typeof INTENTS]
-  const resolvedIntent = classification.intent
+  // Pre-built intent fast path — bypasses agent entirely
+  const isPrebuilt = intent && INTENTS[intent as keyof typeof INTENTS]
 
-  if (!isCustom && INTENTS[resolvedIntent as keyof typeof INTENTS]) {
-    const intentConfig = INTENTS[resolvedIntent as keyof typeof INTENTS]
-    querySQL = intentConfig.sql(userId, account_id, dateFilter)
-    chartType = intentConfig.chart_type
-    intentLabel = intentConfig.label
-    intentDescription = intentConfig.description
-  } else {
-    querySQL = await generateSQL(
-      question, userId, account_id, dedupedHistory, dateContext,
-    )
+  if (isPrebuilt) {
+    const intentConfig = INTENTS[intent as keyof typeof INTENTS]
+    let querySQL = intentConfig.sql(userId, account_id, dateFilter)
+    const chartType = intentConfig.chart_type
+    let intentLabel = intentConfig.label
+    let intentDescription = intentConfig.description
+    const isCustom = false
+    const resolvedIntent = intent
 
-    const validation = validateSQL(querySQL)
-    if (!validation.valid) {
-      return Response.json(
-        { error: `Invalid query: ${validation.reason}` },
-        { status: 400 },
-      )
-    }
-
-    if (!querySQL.toLowerCase().includes("limit")) {
-      querySQL = `${querySQL.trim().replace(/;+$/, "")} LIMIT 100`
-    }
-
-    chartType = "table"
-    intentLabel = "Custom query"
-    intentDescription = "Natural language → SQL"
-  }
-
-
-  // Monthly trend: pick daily / weekly / monthly based on data span
-  if (resolvedIntent === "monthly_trend") {
-    console.log("Final querySQL:", querySQL)
-    console.log("dateFilter:", dateFilter)
-    console.log("account_id:", account_id)
-    const rangeResult = (await db.execute(sql.raw(`
-      SELECT
-        MIN(transaction_date) AS min_date,
-        MAX(transaction_date) AS max_date,
-        COUNT(DISTINCT TO_CHAR(transaction_date, 'YYYY-MM')) AS month_count
-      FROM transactions
-      WHERE user_id = '${userId}'
-        AND account_id = '${account_id}'
-        ${dateFilter}
-    `))) as unknown as { rows: Record<string, unknown>[] }
-
-    const range = rangeResult.rows[0]
-    const monthCount = Number(range?.month_count ?? 0)
-
-    if (monthCount >= 12) {
-      querySQL = `
+    // Monthly trend: pick daily / weekly / monthly based on data span
+    if (resolvedIntent === "monthly_trend") {
+      console.log("Final querySQL:", querySQL)
+      console.log("dateFilter:", dateFilter)
+      console.log("account_id:", account_id)
+      const rangeResult = (await db.execute(sql.raw(`
         SELECT
-          TO_CHAR(transaction_date, 'YYYY-MM') AS month,
-          SUM(CASE WHEN transaction_type = 'debit'
-            THEN amount ELSE 0 END) AS debits,
-          SUM(CASE WHEN transaction_type = 'credit'
-            THEN amount ELSE 0 END) AS credits,
-          SUM(CASE WHEN transaction_type = 'debit'
-            THEN -amount ELSE amount END) AS net
+          MIN(transaction_date) AS min_date,
+          MAX(transaction_date) AS max_date,
+          COUNT(DISTINCT TO_CHAR(transaction_date, 'YYYY-MM')) AS month_count
         FROM transactions
         WHERE user_id = '${userId}'
           AND account_id = '${account_id}'
           ${dateFilter}
-        GROUP BY TO_CHAR(transaction_date, 'YYYY-MM')
-        ORDER BY month ASC
-      `
-      intentLabel = "Monthly trend"
-      intentDescription = "Monthly time-series aggregation"
-    } else if (monthCount >= 3) {
-      querySQL = `
-        SELECT
-          TO_CHAR(DATE_TRUNC('week', transaction_date), 'YYYY-MM-DD') AS week,
-          SUM(CASE WHEN transaction_type = 'debit'
-            THEN amount ELSE 0 END) AS debits,
-          SUM(CASE WHEN transaction_type = 'credit'
-            THEN amount ELSE 0 END) AS credits,
-          SUM(CASE WHEN transaction_type = 'debit'
-            THEN -amount ELSE amount END) AS net
-        FROM transactions
-        WHERE user_id = '${userId}'
-          AND account_id = '${account_id}'
-          ${dateFilter}
-        GROUP BY DATE_TRUNC('week', transaction_date)
-        ORDER BY week ASC
-      `
-      intentLabel = "Weekly trend"
-      intentDescription = "Weekly time-series aggregation"
-    } else {
-      querySQL = `
-        SELECT
-          TO_CHAR(transaction_date, 'YYYY-MM-DD') AS day,
-          SUM(CASE WHEN transaction_type = 'debit'
-            THEN amount ELSE 0 END) AS debits,
-          SUM(CASE WHEN transaction_type = 'credit'
-            THEN amount ELSE 0 END) AS credits,
-          SUM(CASE WHEN transaction_type = 'debit'
-            THEN -amount ELSE amount END) AS net
-        FROM transactions
-        WHERE user_id = '${userId}'
-          AND account_id = '${account_id}'
-          ${dateFilter}
-        GROUP BY TO_CHAR(transaction_date, 'YYYY-MM-DD')
-        ORDER BY day ASC
-      `
-      intentLabel = "Daily trend"
-      intentDescription = "Daily time-series aggregation"
+      `))) as unknown as { rows: Record<string, unknown>[] }
+
+      const range = rangeResult.rows[0]
+      const monthCount = Number(range?.month_count ?? 0)
+
+      if (monthCount >= 12) {
+        querySQL = `
+          SELECT
+            TO_CHAR(transaction_date, 'YYYY-MM') AS month,
+            SUM(CASE WHEN transaction_type = 'debit'
+              THEN amount ELSE 0 END) AS debits,
+            SUM(CASE WHEN transaction_type = 'credit'
+              THEN amount ELSE 0 END) AS credits,
+            SUM(CASE WHEN transaction_type = 'debit'
+              THEN -amount ELSE amount END) AS net
+          FROM transactions
+          WHERE user_id = '${userId}'
+            AND account_id = '${account_id}'
+            ${dateFilter}
+          GROUP BY TO_CHAR(transaction_date, 'YYYY-MM')
+          ORDER BY month ASC
+        `
+        intentLabel = "Monthly trend"
+        intentDescription = "Monthly time-series aggregation"
+      } else if (monthCount >= 3) {
+        querySQL = `
+          SELECT
+            TO_CHAR(DATE_TRUNC('week', transaction_date), 'YYYY-MM-DD') AS week,
+            SUM(CASE WHEN transaction_type = 'debit'
+              THEN amount ELSE 0 END) AS debits,
+            SUM(CASE WHEN transaction_type = 'credit'
+              THEN amount ELSE 0 END) AS credits,
+            SUM(CASE WHEN transaction_type = 'debit'
+              THEN -amount ELSE amount END) AS net
+          FROM transactions
+          WHERE user_id = '${userId}'
+            AND account_id = '${account_id}'
+            ${dateFilter}
+          GROUP BY DATE_TRUNC('week', transaction_date)
+          ORDER BY week ASC
+        `
+        intentLabel = "Weekly trend"
+        intentDescription = "Weekly time-series aggregation"
+      } else {
+        querySQL = `
+          SELECT
+            TO_CHAR(transaction_date, 'YYYY-MM-DD') AS day,
+            SUM(CASE WHEN transaction_type = 'debit'
+              THEN amount ELSE 0 END) AS debits,
+            SUM(CASE WHEN transaction_type = 'credit'
+              THEN amount ELSE 0 END) AS credits,
+            SUM(CASE WHEN transaction_type = 'debit'
+              THEN -amount ELSE amount END) AS net
+          FROM transactions
+          WHERE user_id = '${userId}'
+            AND account_id = '${account_id}'
+            ${dateFilter}
+          GROUP BY TO_CHAR(transaction_date, 'YYYY-MM-DD')
+          ORDER BY day ASC
+        `
+        intentLabel = "Daily trend"
+        intentDescription = "Daily time-series aggregation"
+      }
     }
-  }
 
-  try {
-    const results = (await db.execute(
-      sql.raw(querySQL),
-    )) as unknown as { rows: Record<string, unknown>[] }
-    const rows = results.rows ?? []
+    try {
+      const results = (await db.execute(
+        sql.raw(querySQL),
+      )) as unknown as { rows: Record<string, unknown>[] }
+      const rows = results.rows ?? []
 
-    const totalDebits = rows.reduce((sum, r) => sum + Number(r.debits ?? 0), 0)
-    const totalCredits = rows.reduce((sum, r) => sum + Number(r.credits ?? 0), 0)
+      const totalDebits = rows.reduce((sum, r) => sum + Number(r.debits ?? 0), 0)
+      const totalCredits = rows.reduce((sum, r) => sum + Number(r.credits ?? 0), 0)
 
-    const currencyResult = (await db.execute(sql.raw(`
-      SELECT DISTINCT currency FROM transactions
-      WHERE user_id = '${userId}' AND account_id = '${account_id}'
-      LIMIT 1
-    `))) as unknown as { rows: Record<string, unknown>[] }
-    const currency = currencyResult.rows[0]?.currency as string ?? "INR"
+      const currencyResult = (await db.execute(sql.raw(`
+        SELECT DISTINCT currency FROM transactions
+        WHERE user_id = '${userId}' AND account_id = '${account_id}'
+        LIMIT 1
+      `))) as unknown as { rows: Record<string, unknown>[] }
+      const currency = currencyResult.rows[0]?.currency as string ?? "INR"
 
-    const historyContext = (conversation_history ?? []).length > 0
-      ? `Previous conversation:\n${(conversation_history ?? [])
-          .map((h: HistoryEntry) => `${h.role}: ${h.content}`)
-          .join("\n")}\n\n`
-      : ""
+      const historyContext = (conversation_history ?? []).length > 0
+        ? `Previous conversation:\n${(conversation_history ?? [])
+            .map((h: HistoryEntry) => `${h.role}: ${h.content}`)
+            .join("\n")}\n\n`
+        : ""
 
-    let fullResponseText = ""
-    const encoder = new TextEncoder()
+      let fullResponseText = ""
+      const encoder = new TextEncoder()
 
-    const responseStream = new ReadableStream({
-      async start(controller) {
-        try {
-          const metadata = {
-            type: "metadata",
-            intent: resolvedIntent,
-            intent_label: intentLabel,
-            intent_description: intentDescription,
-            is_custom: isCustom,
-            sql: querySQL.trim(),
-            results: rows,
-            chart_type: chartType,
-            row_count: rows.length,
-            cached: false,
-          }
-          controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify(metadata)}\n\n`)
-          )
+      const responseStream = new ReadableStream({
+        async start(controller) {
+          try {
+            const metadata = {
+              type: "metadata",
+              intent: resolvedIntent,
+              intent_label: intentLabel,
+              intent_description: intentDescription,
+              is_custom: isCustom,
+              sql: querySQL.trim(),
+              results: rows,
+              chart_type: chartType,
+              row_count: rows.length,
+              cached: false,
+            }
+            controller.enqueue(
+              encoder.encode(`data: ${JSON.stringify(metadata)}\n\n`)
+            )
 
-          const synthesisStream = await openai.chat.completions.create({
-            model: "gpt-4o-mini",
-            temperature: 0.3,
-            stream: true,
-            user: "oikos-ledger",
-            messages: [
-              {
-                role: "system",
-                content: `${historyContext}You are a personal finance assistant.
+            const synthesisStream = await openai.chat.completions.create({
+              model: "gpt-4o-mini",
+              temperature: 0.3,
+              stream: true,
+              user: "oikos-ledger",
+              messages: [
+                {
+                  role: "system",
+                  content: `${historyContext}You are a personal finance assistant.
 Rules:
 - Maximum 1-2 sentences
 - Never repeat the question back
@@ -746,10 +806,10 @@ Rules:
 - Use standard number formatting
 - Round amounts to nearest hundred unless exact matters
 - Never say "the data shows" or "based on the results"`,
-              },
-              {
-                role: "user",
-                content: `Question: ${question || intentLabel}
+                },
+                {
+                  role: "user",
+                  content: `Question: ${question || intentLabel}
 ${totalDebits > 0 || totalCredits > 0
   ? `Pre-computed totals:
   Total debits: ${totalDebits.toFixed(2)}
@@ -757,65 +817,190 @@ ${totalDebits > 0 || totalCredits > 0
   : ""}
 Results (sample): ${JSON.stringify(rows.slice(0, 10))}
 Summarize these results accurately.`,
-              },
-            ],
-          })
+                },
+              ],
+            })
 
-          for await (const chunk of synthesisStream) {
-            const text = chunk.choices[0]?.delta?.content ?? ""
-            if (text) {
-              fullResponseText += text
-              controller.enqueue(
-                encoder.encode(
-                  `data: ${JSON.stringify({ type: "text", text })}\n\n`
+            for await (const chunk of synthesisStream) {
+              const text = chunk.choices[0]?.delta?.content ?? ""
+              if (text) {
+                fullResponseText += text
+                controller.enqueue(
+                  encoder.encode(
+                    `data: ${JSON.stringify({ type: "text", text })}\n\n`
+                  )
                 )
-              )
+              }
             }
-          }
 
-          controller.enqueue(encoder.encode("data: [DONE]\n\n"))
-          controller.close()
+            controller.enqueue(encoder.encode("data: [DONE]\n\n"))
+            controller.close()
 
-          const responsePayload = {
-            question: question || intentLabel,
-            intent: resolvedIntent,
-            intent_label: intentLabel,
-            intent_description: intentDescription,
-            is_custom: isCustom,
-            sql: querySQL.trim(),
-            results: rows,
-            response: fullResponseText,
-            chart_type: chartType,
-            row_count: rows.length,
-            cached: false,
-          }
-          await writeCacheEntry(
-            userId, account_id, queryHash,
-            cacheText, embedding, responsePayload,
-          )
-        } catch (err) {
-          controller.enqueue(
-            encoder.encode(
-              `data: ${JSON.stringify({ type: "error", message: String(err) })}\n\n`
+            const responsePayload = {
+              question: question || intentLabel,
+              intent: resolvedIntent,
+              intent_label: intentLabel,
+              intent_description: intentDescription,
+              is_custom: isCustom,
+              sql: querySQL.trim(),
+              results: rows,
+              response: fullResponseText,
+              chart_type: chartType,
+              row_count: rows.length,
+              cached: false,
+            }
+            await writeCacheEntry(
+              userId, account_id, queryHash,
+              cacheText, embedding, responsePayload,
             )
-          )
-          controller.close()
-        }
-      },
-    })
+          } catch (err) {
+            controller.enqueue(
+              encoder.encode(
+                `data: ${JSON.stringify({ type: "error", message: String(err) })}\n\n`
+              )
+            )
+            controller.close()
+          }
+        },
+      })
 
-    return new Response(responseStream, {
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        "Connection": "keep-alive",
-      },
-    })
+      return new Response(responseStream, {
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          "Connection": "keep-alive",
+        },
+      })
+    } catch (error) {
+      console.error("Query execution failed. SQL was:\n", querySQL, "\nError:", error)
+      return Response.json(
+        { error: "Query execution failed", detail: String(error) },
+        { status: 500 },
+      )
+    }
+  }
+
+  // Custom query — run agent loop
+  const currencyResult = (await db.execute(sql.raw(`
+    SELECT DISTINCT currency FROM transactions
+    WHERE user_id = '${userId}' AND account_id = '${account_id}'
+    LIMIT 1
+  `))) as unknown as { rows: Record<string, unknown>[] }
+  const currency = currencyResult.rows[0]?.currency as string ?? "INR"
+
+  let agentResult: AgentResult
+  try {
+    agentResult = await runAgentLoop(
+      question,
+      userId,
+      account_id,
+      dedupedHistory,
+      dateContext,
+      currency,
+    )
   } catch (error) {
-    console.error("Query execution failed. SQL was:\n", querySQL, "\nError:", error)
+    console.error("Agent loop failed:", error)
     return Response.json(
-      { error: "Query execution failed", detail: String(error) },
+      { error: "Query failed", detail: String(error) },
       { status: 500 },
     )
   }
+
+  // Direct response — clarification or off-topic
+  if (agentResult.type === "direct_response") {
+    return Response.json({
+      type: "complete",
+      question,
+      intent: "finance_custom",
+      intent_label: "Response",
+      intent_description: "",
+      is_custom: true,
+      sql: "",
+      results: [],
+      response: agentResult.response,
+      chart_type: "none",
+      row_count: 0,
+      cached: false,
+    })
+  }
+
+  // SQL result — stream back with metadata
+  const { sql: querySQL, rows, summary, chartType } = agentResult
+  const intentLabel = "Custom query"
+  const intentDescription = "Natural language → SQL"
+  const isCustom = true
+  const resolvedIntent = "finance_custom"
+
+  const encoder = new TextEncoder()
+  let fullResponseText = ""
+
+  const responseStream = new ReadableStream({
+    async start(controller) {
+      try {
+        const metadata = {
+          type: "metadata",
+          intent: resolvedIntent,
+          intent_label: intentLabel,
+          intent_description: intentDescription,
+          is_custom: isCustom,
+          sql: querySQL,
+          results: rows,
+          chart_type: chartType,
+          row_count: rows.length,
+          cached: false,
+        }
+        controller.enqueue(
+          encoder.encode(`data: ${JSON.stringify(metadata)}\n\n`)
+        )
+
+        // Stream the already-computed summary word by word
+        const words = summary.split(" ")
+        for (const word of words) {
+          const text = word + " "
+          fullResponseText += text
+          controller.enqueue(
+            encoder.encode(
+              `data: ${JSON.stringify({ type: "text", text })}\n\n`
+            )
+          )
+        }
+
+        controller.enqueue(encoder.encode("data: [DONE]\n\n"))
+        controller.close()
+
+        const responsePayload = {
+          question,
+          intent: resolvedIntent,
+          intent_label: intentLabel,
+          intent_description: intentDescription,
+          is_custom: isCustom,
+          sql: querySQL,
+          results: rows,
+          response: summary,
+          chart_type: chartType,
+          row_count: rows.length,
+          cached: false,
+        }
+        await writeCacheEntry(
+          userId, account_id, queryHash,
+          cacheText, embedding, responsePayload,
+        )
+      } catch (err) {
+        controller.enqueue(
+          encoder.encode(
+            `data: ${JSON.stringify({ type: "error", message: String(err) })}\n\n`
+          )
+        )
+        controller.close()
+      }
+    },
+  })
+
+  return new Response(responseStream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+    },
+  })
 }

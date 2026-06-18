@@ -60,23 +60,25 @@ export function TurnCard({ turn, onSuggestionClick }: Props) {
     <div className={`flex flex-col gap-3
       ${turn.role === "user" ? "items-end" : "items-start"}`}>
 
-      {/* Message bubble */}
-      <div className={`max-w-[80%] rounded-2xl px-4 py-2.5
-        text-sm leading-relaxed
-        ${turn.role === "user"
-          ? "bg-primary text-primary-foreground rounded-br-sm"
-          : "bg-muted rounded-bl-sm"
-        }`}>
-        {turn.content}
-        {turn.cached && (
-          <span className="ml-2 inline-flex items-center gap-1
-                           rounded-full bg-green-100 px-1.5 py-0.5
-                           text-[10px] font-medium text-green-700
-                           dark:bg-green-900/30 dark:text-green-400">
-            ⚡ cached
-          </span>
-        )}
-      </div>
+      {/* Message bubble — omit entirely if content is empty */}
+      {(turn.content || (!turn.sql && !turn.results?.length)) && (
+        <div className={`max-w-[80%] rounded-2xl px-4 py-2.5
+          text-sm leading-relaxed
+          ${turn.role === "user"
+            ? "bg-primary text-primary-foreground rounded-br-sm"
+            : "bg-muted rounded-bl-sm"
+          }`}>
+          {turn.content}
+          {turn.cached && (
+            <span className="ml-2 inline-flex items-center gap-1
+                             rounded-full bg-green-100 px-1.5 py-0.5
+                             text-[10px] font-medium text-green-700
+                             dark:bg-green-900/30 dark:text-green-400">
+              ⚡ cached
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Chart — open by default */}
       {turn.role === "assistant" && hasChart && (

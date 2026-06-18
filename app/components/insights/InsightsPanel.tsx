@@ -66,6 +66,7 @@ export function InsightsPanel() {
   const [turns, setTurns] = useState<ChatTurn[]>([])
   const [error, setError] = useState<string | null>(null)
   const [audioEnabled, setAudioEnabled] = useState(false)
+  const audioEnabledRef = useRef(false)
   const [isVoiceConnected, setIsVoiceConnected] = useState(false)
   const [dateFrom, setDateFrom] = useState<string>("")
   const [dateTo, setDateTo] = useState<string>("")
@@ -88,6 +89,12 @@ export function InsightsPanel() {
   const transcriptTimer = useRef<NodeJS.Timeout | null>(null)
   const turnsRef = useRef<ChatTurn[]>([])
   const lastAudioScheduledEndTimeRef = useRef<number>(0)
+  const currentAssistantItemId = useRef<string | null>(null)
+  const audioSamplesPlayed = useRef<number>(0)
+  const gainNodeRef = useRef<GainNode | null>(null)
+  const currentResponseId = useRef<string | null>(null)
+  const mutedItemId = useRef<string | null>(null)
+  const activeAudioSourcesRef = useRef<AudioBufferSourceNode[]>([])
 
   // Scroll to bottom on new turns
   useEffect(() => {
@@ -110,6 +117,8 @@ export function InsightsPanel() {
     stopMicCapture()
     setIsVoiceConnected(false)
     setVoiceStatus("idle")
+    setAudioEnabled(false)
+    audioEnabledRef.current = false
   }, [])
 
   // Consolidated account change + persistence effect
@@ -277,6 +286,9 @@ export function InsightsPanel() {
       
       console.log("conversation history length:", buildHistory().length)
 
+      // Extract the last active chart layout classification from history turns
+      const currentUiChart = [...turns].reverse().find(t => t.chart_type)?.chart_type || "table";
+
       const res = await fetch("/api/insights/query", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -315,11 +327,30 @@ export function InsightsPanel() {
         }
 
         if (data.type === "suggestions") {
+          if (!isVoice) {
+            addTurn({
+              role: "assistant",
+              content: data.response,
+              type: "suggestions",
+              suggestions: data.suggestions,
+            })
+          }
+          return data.response ?? ""
+        }
+
+        if (isVoice) {
+          // Show data card but skip text bubble — model speaks the summary
           addTurn({
             role: "assistant",
-            content: data.response,
-            type: "suggestions",
-            suggestions: data.suggestions,
+            content: "",
+            type: "message",
+            cached: data.cached,
+            sql: data.sql,
+            chart_type: data.chart_type,
+            results: data.results,
+            intent_label: data.intent_label,
+            intent_description: data.intent_description,
+            row_count: data.row_count,
           })
           return data.response ?? ""
         }
@@ -342,8 +373,6 @@ export function InsightsPanel() {
       // Streaming SSE response
       const turnId = crypto.randomUUID()
 
-      // In voice mode, response.output_item.done adds the turn after the model
-      // speaks — skip the placeholder here to avoid an empty assistant box.
       if (!isVoice) {
         setTurns(prev => [
           ...prev,
@@ -379,7 +408,24 @@ export function InsightsPanel() {
             const parsed = JSON.parse(payload)
 
             if (parsed.type === "metadata") {
-              if (!isVoice) {
+              if (isVoice) {
+                setTurns(prev => [
+                  ...prev,
+                  {
+                    id: turnId,
+                    role: "assistant" as const,
+                    content: "",
+                    type: "message" as const,
+                    timestamp: new Date(),
+                    sql: parsed.sql,
+                    chart_type: parsed.chart_type,
+                    results: parsed.results,
+                    intent_label: parsed.intent_label,
+                    intent_description: parsed.intent_description,
+                    row_count: parsed.row_count,
+                  },
+                ])
+              } else {
                 updateTurn(turnId, {
                   sql: parsed.sql,
                   chart_type: parsed.chart_type,
@@ -481,6 +527,8 @@ export function InsightsPanel() {
 
       ws.onopen = async () => {
         setVoiceStatus("listening")
+        setAudioEnabled(true)
+        audioEnabledRef.current = true
 
         ws.send(JSON.stringify({
           type: "session.update",
@@ -494,9 +542,11 @@ export function InsightsPanel() {
                 },
               turn_detection: {
                 type: "server_vad",
-                threshold: 0.65,
+                threshold: 0.5,
                 prefix_padding_ms: 300,
                 silence_duration_ms: 800,
+                interrupt_response: true,
+                create_response: true,
               },
             },
               output: {
@@ -507,7 +557,7 @@ export function InsightsPanel() {
               {
                 type: "function",
                 name: "query_database",
-                description: `Queries the user's financial transactions, expenses, balances, and spending trends. Use this whenever the user asks about spending, transactions, merchants, categories, monthly trends, or any financial data.`,
+                description: `Query the user's financial transaction database and display the results as a chart or table in the app UI. Use this tool for ANY question about the user's finances including spending, income, merchants, categories, trends, and balances. Also use this tool when the user asks to plot, graph, chart, or visualize any financial data — the app will automatically render the appropriate chart type from the query results. Never say you cannot render a chart; always call this tool instead.`,
                 parameters: {
                   type: "object",
                   properties: {
@@ -522,11 +572,12 @@ export function InsightsPanel() {
               {
                 type: "function",
                 name: "end_conversation",
-                description: "Call this only after the user has explicitly confirmed they don't need anything else. Do not call this on a simple 'thank you' alone — first ask if there's anything else, and only call this once they confirm they're finished.",
+                description: `Call this tool immediately when the user indicates they are done. Trigger phrases include: "no", "that is all", "nothing else", "i'm done", "no more", "goodbye", "bye", "nope", "all good", "that's it", "no thank you", "no thanks", or any similar closing response to "is there anything else?" Do NOT ask a follow-up question first. Call the tool immediately on these phrases.`,
                 parameters: { type: "object", properties: {} },
               },
             ],
             tool_choice: "auto",
+            instructions: `You are a personal finance assistant for Oikos Ledger. You ONLY discuss topics related to the user's personal finances — transactions, spending, income, merchants, categories, budgets, and account balances. If the user asks about ANYTHING else (technology, science, sports, cooking, general knowledge, coding, data structures, or any non-finance topic), respond with exactly: "I'm only able to help with your finances. Want to check your spending, transactions, or trends?" Do not answer off-topic questions under any circumstances, even if the user insists or frames them as hypothetical. When calling query_database, always include the full context in the question — especially date ranges, categories, and merchants from the current conversation. Never send a vague question like "plot by day" without specifying which time period. Example: if the user previously asked about March and April food spending and now says "by day", send: "Plot my food expenses by day for March and April 2026."`,
           },
         }))
 
@@ -578,7 +629,7 @@ export function InsightsPanel() {
           ws.send(JSON.stringify({
             type: "response.create",
             response: {
-              instructions: "Greet the user warmly in exactly one brief sentence welcoming them back. Keep it short.",
+              instructions: "Greet the user warmly in exactly one brief sentence. Keep it short.",
             },
           }));
           isResponseInProgress.current = true;
@@ -596,6 +647,10 @@ export function InsightsPanel() {
 
         if (msg.type === "response.created") {
           isResponseInProgress.current = true
+          currentResponseId.current = msg.response?.id ?? null
+          if (gainNodeRef.current) {
+            gainNodeRef.current.gain.value = 1
+          }
         }
 
         if (msg.type === "response.done") {
@@ -628,15 +683,39 @@ export function InsightsPanel() {
           setVoiceStatus("listening")
           setQuestion("")
 
-          // Interrupt client-side playback: clear future scheduling timeline
+          // Force stop all active/queued audio nodes instantly to clear the speaker track
+          activeAudioSourcesRef.current.forEach(source => {
+            try {
+              source.stop()
+            } catch (e) {
+              // Node might have already finished naturally
+            }
+          })
+          activeAudioSourcesRef.current = []
+
           if (audioContextRef.current) {
             nextAudioStartTime = audioContextRef.current.currentTime
             lastAudioScheduledEndTimeRef.current = audioContextRef.current.currentTime
+            audioSamplesPlayed.current = 0
           }
+          if (gainNodeRef.current) {
+            gainNodeRef.current.gain.value = 0
+          }
+          mutedItemId.current = currentAssistantItemId.current
 
-          // Interrupt server-side: Notify OpenAI to cancel what it was just streaming
-          if (wsRef.current?.readyState === WebSocket.OPEN) {
+          // Barge-in: truncate assistant audio at the played point, then cancel
+          if (wsRef.current?.readyState === WebSocket.OPEN && isResponseInProgress.current) {
+            const playedMs = Math.round((audioSamplesPlayed.current / 24000) * 1000)
+            if (currentAssistantItemId.current) {
+              wsRef.current.send(JSON.stringify({
+                type: "conversation.item.truncate",
+                item_id: currentAssistantItemId.current,
+                content_index: 0,
+                audio_end_ms: playedMs,
+              }))
+            }
             wsRef.current.send(JSON.stringify({ type: "response.cancel" }))
+            isResponseInProgress.current = false
           }
         }
 
@@ -668,7 +747,8 @@ export function InsightsPanel() {
               transcriptTimer.current = null
               if (lastTranscriptRef.current) {
                 addTurn({ role: "user", content: lastTranscriptRef.current, type: "message" })
-                lastTranscriptRef.current = "" // Clear it out so flushPendingUserTranscript won't re-add it
+                lastTranscriptRef.current = ""
+                setQuestion("")
               }
             }, 500)
           }
@@ -704,6 +784,7 @@ export function InsightsPanel() {
           if (rawTranscript) {
             addTurn({ role: "user", content: rawTranscript, type: "message" })
             lastTranscriptRef.current = ""
+            setQuestion("")
           }
 
           if (msg.name === "end_conversation") {
@@ -716,12 +797,15 @@ export function InsightsPanel() {
                   output: JSON.stringify({ success: true }),
                 },
               }))
-              if (!isResponseInProgress.current) {
-                wsRef.current.send(JSON.stringify({ type: "response.create" }))
-                isResponseInProgress.current = true
-              }
+              // Always create farewell response regardless of in-progress state
+              wsRef.current.send(JSON.stringify({ type: "response.create" }))
+              isResponseInProgress.current = true
             }
-            awaitingFarewellResponse.current = true
+            // Delay setting the flag so the tool-call response.done
+            // fires and clears first before we arm the farewell trap
+            setTimeout(() => {
+              awaitingFarewellResponse.current = true
+            }, 300)
             return
           }
 
@@ -795,19 +879,30 @@ export function InsightsPanel() {
           }
 
           // Safely render the greetings, transitions, summaries, or endings on-screen
-          if (textContent) {
-            addTurn({ 
-              role: "assistant", 
-              content: textContent, 
-              type: "message" 
+          if (textContent && msg.item?.phase === "final_answer") {
+            addTurn({
+              role: "assistant",
+              content: textContent,
+              type: "message"
             })
           }
         }
 
+        if (msg.type === "response.output_item.added") {
+          if (msg.item?.role === "assistant") {
+            currentAssistantItemId.current = msg.item.id as string
+            audioSamplesPlayed.current = 0
+            mutedItemId.current = null
+          }
+        }
+
         if (msg.type === "response.output_audio.delta" && audioContextRef.current) {
+          // console.log("audio delta msg keys:", Object.keys(msg), "item_id:", msg.item_id)
           // If audio output is explicitly toggled off by the user, ignore playout pipelines
-          if (!audioEnabled) return
-          
+          if (!audioEnabledRef.current) return
+          // Skip deltas belonging to the item muted by barge-in
+          if (msg.item_id && msg.item_id === mutedItemId.current) return
+
           setVoiceStatus("speaking")
           const audioBuffer = Uint8Array.from(
             atob(msg.delta as string), c => c.charCodeAt(0)
@@ -819,21 +914,32 @@ export function InsightsPanel() {
             float32Data[i] = pcmData[i] / 32768.0
           }
 
+          audioSamplesPlayed.current += float32Data.length
+
           const ctx = audioContextRef.current
           const buffer = ctx.createBuffer(1, float32Data.length, 24000)
           buffer.copyToChannel(float32Data, 0)
 
           const source = ctx.createBufferSource()
           source.buffer = buffer
-          source.connect(ctx.destination)
+          source.connect(gainNodeRef.current ?? ctx.destination)
 
           const startTime = Math.max(ctx.currentTime, nextAudioStartTime)
           source.start(startTime)
           nextAudioStartTime = startTime + buffer.duration
           lastAudioScheduledEndTimeRef.current = nextAudioStartTime
+
+          // Track source to allow cancellation on interruption
+          activeAudioSourcesRef.current.push(source)
+          source.onended = () => {
+            activeAudioSourcesRef.current = activeAudioSourcesRef.current.filter(s => s !== source)
+          }
         }
 
         if (msg.type === "error") {
+          // Suppress cancel race condition — harmless, fires when
+          // speech starts after response has already completed
+          if (msg.error?.code === "response_cancel_not_active") return
           console.error("Realtime API error:", msg.error)
           setError(`Voice error: ${msg.error?.message}`)
         }
@@ -901,6 +1007,11 @@ export function InsightsPanel() {
       source.connect(workletNode)
       workletNode.connect(audioContext.destination)
 
+      const gainNode = audioContext.createGain()
+      gainNode.gain.value = 1
+      gainNode.connect(audioContext.destination)
+      gainNodeRef.current = gainNode
+
       return { workletNode }
     } catch (err) {
       console.error("startMicCapture failed:", err)
@@ -911,6 +1022,8 @@ export function InsightsPanel() {
   function stopMicCapture() {
     processorRef.current?.disconnect()
     processorRef.current = null
+    gainNodeRef.current?.disconnect()
+    gainNodeRef.current = null
     audioContextRef.current?.close()
     audioContextRef.current = null
     streamRef.current?.getTracks().forEach((t: MediaStreamTrack) => t.stop())
@@ -1125,7 +1238,12 @@ export function InsightsPanel() {
           {/* Audio toggle — only relevant when voice is not active */}
           {!isVoiceConnected && (
             <button
-              onClick={() => setAudioEnabled(prev => !prev)}
+              onClick={() => {
+                setAudioEnabled(prev => {
+                  audioEnabledRef.current = !prev
+                  return !prev
+                })
+              }}
               className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full border transition-colors ${
                 audioEnabled
                   ? "border-primary bg-primary/10 text-primary"
@@ -1140,7 +1258,7 @@ export function InsightsPanel() {
           {/* Voice connect/disconnect */}
           <button
             onClick={isVoiceConnected ? disconnectVoice : connectVoice}
-            disabled={!isVoiceConnected && !process.env.NEXT_PUBLIC_VOICE_ENABLED}
+            disabled={!isVoiceConnected && !VOICE_ENABLED}
             className={`flex h-10 w-10 shrink-0 items-center justify-center 
               rounded-full border transition-colors 
               disabled:opacity-50 disabled:cursor-not-allowed ${

@@ -40,6 +40,28 @@ def main() -> None:
             )
         """))
 
+        # Insights query cache: simple key-value cache keyed by account+user+question
+        # The SQLModel QueryCache uses embeddings (different purpose); this table
+        # supports the /api/insights/query 1-hour response cache.
+        session.exec(text("""
+            DROP TABLE IF EXISTS query_cache CASCADE
+        """))
+        
+        session.exec(text("""
+            CREATE TABLE query_cache (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                account_id UUID NOT NULL REFERENCES bank_accounts(id),
+                user_id UUID NOT NULL REFERENCES users(id),
+                query_hash TEXT NOT NULL,
+                query_text TEXT NOT NULL,
+                query_embedding VECTOR(1536),
+                result JSONB NOT NULL,
+                expires_at TIMESTAMPTZ NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE (user_id, account_id, query_hash)
+            )   
+        """))
+
         session.commit()
 
     inspector = inspect(engine)

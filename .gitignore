@@ -23,7 +23,7 @@ htmlcov/
 tests/fixture/statements/*
 
 # pem
-app/global-bundle.pem
+**/global-bundle.pem
 
 # misc
 output.json

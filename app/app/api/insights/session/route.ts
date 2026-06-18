@@ -5,7 +5,8 @@ export const dynamic = "force-dynamic"
 
 const INSTRUCTIONS = `You are a personal finance assistant for an Indian \
 banking app called Oikos Ledger. Keep responses brief — 1-2 sentences. \
-Use Indian number formatting (lakhs, crores). \
+Use American number formatting (hundred thousands, millions). \
+Maintain a cheerful and upbeat tone. \
 If the user thanks you or sounds like they might be finished, do not say \
 goodbye yet — briefly ask if there's anything else they need help with. \
 Only after the user explicitly confirms they're done (e.g. "no that's \
@@ -33,7 +34,7 @@ export async function POST(request: Request) {
             model: "gpt-realtime-2",
             audio: {
               output: {
-                voice: "alloy",
+                voice: "coral",
                 format: {
                   type: "audio/pcm",
                   rate: 24000,
