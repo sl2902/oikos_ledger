@@ -2,31 +2,29 @@
 
 ## Status
 
-All 13 custom tables are implemented and verified. They are defined in two places:
+All 13 custom tables are implemented and verified. Defined in two places:
 
 - **Python** — `ingestion/models/` (SQLModel classes, authoritative for table creation)
 - **TypeScript** — `app/lib/db/schema.ts` (Drizzle schema, mirrors Python for type-safe reads)
 
-> **Note on `spatial_ref_sys`:** PostGIS creates a `spatial_ref_sys` system table in the database. It appears alongside the 13 custom tables in the Supabase table editor but is not part of the Oikos Ledger schema and is not defined in either ORM.
+> **Note on `spatial_ref_sys`:** PostGIS creates this system table. It appears in the Supabase/Aurora table editor alongside the 13 custom tables but is not part of the Oikos Ledger schema.
 
 ---
 
 ## Design Conventions
 
-- All primary keys are `UUID` with `server_default=text("gen_random_uuid()")` — the default is a PostgreSQL column-level expression, not an application-layer `default_factory`. This means inserts from any client (Python, SQL, tests) get a UUID without the application supplying one.
-- All `created_at` columns use `server_default=text("timezone('utc', now())")`. All `updated_at` columns add `onupdate=text("timezone('utc', now())")`. Both are `TIMESTAMPTZ` (timezone-aware).
-- `transactions` and `transaction_amendments` are **append-only** — neither table has an `updated_at` column; corrections go to `transaction_amendments`, never back to `transactions`
-- PostGIS geometry columns use `GEOMETRY(Point, 4326)` — WGS 84 lat/lng stored as a single column, not separate float columns
-- pgvector columns use `VECTOR(1536)` — 1536 dimensions matching OpenAI `text-embedding-3-small`
-- **Schema changes while tables are empty:** update the SQLModel model in `ingestion/models/`, run `python scripts/drop_tables.py` then `python scripts/create_tables.py`. Do not alter the live database directly. Once tables contain data, proper migrations will be required.
+- All primary keys are `UUID` with `server_default=text("gen_random_uuid()")` — PostgreSQL column-level expression, not application-layer `default_factory`.
+- All `created_at` columns use `server_default=text("timezone('utc', now())")`. All `updated_at` columns add `onupdate=text("timezone('utc', now())")`. Both are `TIMESTAMPTZ`.
+- `transactions` and `transaction_amendments` are **append-only** — corrections go to `transaction_amendments`, never back to `transactions`.
+- PostGIS geometry columns use `GEOMETRY(Point, 4326)` — WGS 84 lat/lng as a single column.
+- pgvector columns use `VECTOR(1536)` — 1536 dimensions matching OpenAI `text-embedding-3-small`.
+- **Schema changes while tables are empty:** update the SQLModel model, run `python scripts/drop_tables.py` then `python scripts/create_tables.py`. Once tables contain data, write proper migrations.
 
 ---
 
 ## Tables
 
 ### `users`
-
-Authenticated user identity and preferences.
 
 | Column | Type | Notes |
 |---|---|---|
@@ -41,8 +39,6 @@ Authenticated user identity and preferences.
 ---
 
 ### `bank_accounts`
-
-A user can have multiple bank accounts. Transactions belong to an account.
 
 | Column | Type | Notes |
 |---|---|---|
@@ -59,8 +55,6 @@ A user can have multiple bank accounts. Transactions belong to an account.
 
 ### `uploads`
 
-Tracks every CSV upload event and ingestion pipeline status.
-
 | Column | Type | Notes |
 |---|---|---|
 | `id` | UUID PK | |
@@ -68,15 +62,16 @@ Tracks every CSV upload event and ingestion pipeline status.
 | `account_id` | UUID FK → `bank_accounts.id` | |
 | `filename` | TEXT | Original filename |
 | `s3_key` | TEXT | S3 object key |
+| `file_hash` | TEXT | SHA-256 of raw CSV — used for duplicate detection |
 | `status` | TEXT | pending \| processing \| complete \| failed \| cancelled |
 | `row_count` | INTEGER | Nullable — set after parsing |
 | `error_message` | TEXT | Nullable — set on failure |
 | `uploaded_at` | TIMESTAMPTZ | |
 | `completed_at` | TIMESTAMPTZ | Nullable |
-| `opening_balance` | NUMERIC(15,2) | Nullable — account balance before first transaction in statement. Derived from first row: `closing + debit - credit`. |
-| `closing_balance` | NUMERIC(15,2) | Nullable — account balance after last transaction in statement. |
-| `balance_verified` | BOOLEAN | Nullable — true if all row closing balances are mathematically consistent. False if any discrepancy detected. Null if closing balance not available in CSV. |
-| `balance_discrepancy` | NUMERIC(15,2) | Nullable — absolute difference between expected and actual closing balance. Null if `balance_verified` is true. |
+| `opening_balance` | NUMERIC(15,2) | Nullable — derived from first row: `closing + debit - credit` |
+| `closing_balance` | NUMERIC(15,2) | Nullable — from last transaction in statement |
+| `balance_verified` | BOOLEAN | Nullable — true if all row closing balances are mathematically consistent |
+| `balance_discrepancy` | NUMERIC(15,2) | Nullable — absolute difference between expected and actual closing balance |
 
 ---
 
@@ -88,7 +83,7 @@ Normalised merchant registry. Raw bank description strings are resolved to canon
 |---|---|---|
 | `id` | UUID PK | |
 | `global_merchant_id` | TEXT | Nullable — external reference |
-| `canonical_name` | TEXT | LLM-resolved name |
+| `canonical_name` | TEXT | LLM-resolved name. `UNIQUE` |
 | `category` | TEXT | |
 | `subcategory` | TEXT | Nullable |
 | `location` | GEOMETRY(Point, 4326) | Nullable — PostGIS |
@@ -96,27 +91,17 @@ Normalised merchant registry. Raw bank description strings are resolved to canon
 | `created_at` | TIMESTAMPTZ | |
 | `updated_at` | TIMESTAMPTZ | |
 
----
+**Lookup strategy:** `ILIKE` partial match on `canonical_name` using the first 20 characters of the extracted merchant name.
 
-### Merchant Registry
+**Write strategy:** `INSERT ... ON CONFLICT DO UPDATE` — latest LLM result always wins. Category is overridden by deterministic categorisation before upsert.
 
-Append-only cache of LLM normalization results. Written to after every successful LLM call. Read before calling LLM — a registry hit skips the LLM entirely.
-
-**Lookup strategy:**
-- `ILIKE` partial match on `canonical_name` using the first 20 characters of the extracted merchant name.
-
-**Write strategy:**
-- `INSERT ... ON CONFLICT DO UPDATE` — latest LLM result always wins. Category is overridden by deterministic categorization before upsert, so the stored category reflects the deterministic result when one is available.
-
-**Limitations:**
-- Registry is only populated for transactions that go through the LLM path. Deterministic transactions (UPI with keyword match, bill payments, gateway patterns) do not write to the registry.
-- Fuzzy matching via `pg_trgm` is planned but not yet implemented — the registry is too sparse on first run for similarity thresholds to be reliable.
+**Limitations:** Registry only populated for LLM-path transactions. Deterministic transactions (UPI with keyword match, bill payments, gateway patterns) do not write to the registry.
 
 ---
 
 ### `categories`
 
-Reference hierarchy for spending categories. Self-referential for subcategories. Seeded by `scripts/seed_categories.py`, not user-generated. The seeder is idempotent — safe to re-run, skips existing rows. Current seed data: 10 top-level categories, 35 subcategories.
+Reference hierarchy for spending categories. Self-referential for subcategories. Seeded by `scripts/seed_categories.py` (10 top-level, 35 subcategories). Not user-generated.
 
 | Column | Type | Notes |
 |---|---|---|
@@ -131,7 +116,7 @@ Reference hierarchy for spending categories. Self-referential for subcategories.
 
 ### `transactions`
 
-Core financial data. **Append-only — no `updated_at`.** Rows are never updated or deleted. Corrections go to `transaction_amendments`. Both the raw bank string and the LLM-normalised merchant name are stored.
+Core financial data. **Append-only — no `updated_at`.** Corrections go to `transaction_amendments`.
 
 | Column | Type | Notes |
 |---|---|---|
@@ -140,57 +125,43 @@ Core financial data. **Append-only — no `updated_at`.** Rows are never updated
 | `account_id` | UUID FK → `bank_accounts.id` | |
 | `merchant_id` | UUID FK → `merchants.id` | Nullable |
 | `upload_id` | UUID FK → `uploads.id` | |
-| `row_number` | INTEGER | Nullable — original CSV row position. Sort by `(transaction_date DESC, row_number DESC)` to show newest transactions first while preserving bank statement order within each day. |
+| `row_number` | INTEGER | Nullable — original CSV row position |
 | `transaction_date` | DATE | |
 | `raw_description` | TEXT | Original bank string — never modified |
 | `normalized_merchant` | TEXT | LLM-resolved |
 | `amount` | NUMERIC(12,2) | Always positive |
-| `closing_balance` | NUMERIC(15,2) | Nullable — running account balance after this transaction as reported by the bank. Used for balance verification and per-month opening/closing balance display. |
+| `closing_balance` | NUMERIC(15,2) | Nullable — running balance after this transaction |
 | `currency` | TEXT | ISO 4217 |
 | `transaction_type` | TEXT | debit \| credit |
-| `reference_number` | TEXT | Nullable — `Chq/Ref Number` from bank CSV; used for deduplication |
+| `reference_number` | TEXT | Nullable — `Chq/Ref Number` from bank CSV |
 | `category` | TEXT | |
 | `subcategory` | TEXT | Nullable |
 | `location` | GEOMETRY(Point, 4326) | Nullable — PostGIS |
 | `embedding` | VECTOR(1536) | pgvector |
 | `created_at` | TIMESTAMPTZ | |
 
+Sort order: `(transaction_date DESC, row_number DESC)` — newest first, intra-day order matches original bank statement.
+
 ---
 
 ### `transaction_amendments`
 
-**Append-only sidecar to `transactions` — no `updated_at`.** Every user or system correction creates a new row. The original transaction is never modified. Current state is derived by replaying amendments on top of the original row.
+**Append-only sidecar to `transactions` — no `updated_at`.** Every user or system correction creates a new row. The original transaction is never modified. Current state derived by replaying amendments on top of the original row.
 
-`amendment_group_id` binds all amendments produced by a single user interaction — a user editing multiple fields at once generates one group, not one row per field.
+`amendment_group_id` binds all amendments from a single user interaction.
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | UUID PK | |
 | `transaction_id` | UUID FK → `transactions.id` | |
-| `amendment_group_id` | UUID | Groups amendments from one interaction |
+| `amendment_group_id` | UUID | Groups simultaneous field changes |
 | `user_id` | UUID FK → `users.id` | |
-| `field_name` | TEXT | Which field was amended |
-| `old_value` | TEXT | Value before |
-| `new_value` | TEXT | Value after |
+| `field_name` | TEXT | normalized_merchant \| category \| subcategory \| payment_method |
+| `old_value` | TEXT | |
+| `new_value` | TEXT | |
 | `amended_by` | TEXT | user \| system |
 | `reason` | TEXT | Nullable |
 | `amended_at` | TIMESTAMPTZ | |
-
----
-
-### `macro_economic_data`
-
-Time-series macroeconomic indicators by country and period. One row per indicator per country per period.
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | UUID PK | |
-| `country_code` | TEXT | ISO 3166-1 alpha-2 |
-| `indicator` | TEXT | gdp_growth \| inflation \| food_inflation \| gdp_per_capita |
-| `period` | TEXT | YYYY-MM |
-| `value` | NUMERIC(12,4) | |
-| `source` | TEXT | world_bank \| rbi |
-| `fetched_at` | TIMESTAMPTZ | |
 
 ---
 
@@ -211,48 +182,71 @@ Pre-computed monthly spend aggregations per user per category. Computed by Lambd
 | `last_upload_id` | UUID FK → `uploads.id` | Tracks which upload triggered recomputation |
 | `computed_at` | TIMESTAMPTZ | |
 
+`UNIQUE (user_id, period, category)`
+
+---
+
+### `macro_economic_data`
+
+Time-series macroeconomic indicators by country and period. One row per indicator per country per period.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | UUID PK | |
+| `country_code` | TEXT | ISO 3166-1 alpha-2 |
+| `indicator` | TEXT | e.g. "gdp_growth", "food_inflation" |
+| `period` | TEXT | YYYY or YYYY-MM |
+| `value` | NUMERIC(10,4) | |
+| `source` | TEXT | "world_bank" \| "rbi" |
+| `fetched_at` | TIMESTAMPTZ | |
+
+`UNIQUE (country_code, indicator, period)`
+
 ---
 
 ### `recommendations`
 
-Generated recommendations per user. Linked to the macro indicator that triggered them, if applicable.
+Generated recommendations per user. Linked to the macro indicator or RBI benchmark that triggered them.
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | UUID PK | |
 | `user_id` | UUID FK → `users.id` | |
-| `type` | TEXT | reduce_spending \| shift_category \| macro_alert |
+| `type` | TEXT | reduce_spending \| shift_category \| macro_alert \| benchmark_gap |
 | `priority` | TEXT | high \| medium \| low |
 | `message` | TEXT | Human-readable |
-| `supporting_data` | JSONB | Supporting figures and context |
+| `supporting_data` | JSONB | Supporting figures, benchmark comparison data |
 | `category` | TEXT | Nullable |
 | `macro_indicator` | TEXT | Nullable — indicator that triggered this |
 | `is_dismissed` | BOOLEAN | Default false |
 | `created_at` | TIMESTAMPTZ | |
 | `updated_at` | TIMESTAMPTZ | |
 
+`UNIQUE (user_id, type, category)`
+
 ---
 
 ### `query_cache`
 
-Caches expensive pgvector semantic search results. `query_embedding` enables an exact vector match lookup before running a full cosine similarity scan — a cache hit avoids touching the `transactions` HNSW index entirely.
+Caches NL→SQL query results. Two-tier lookup: exact SHA-256 hash first, then pgvector cosine similarity.
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | UUID PK | |
 | `user_id` | UUID FK → `users.id` | |
-| `query_hash` | TEXT | SHA-256 of query text — secondary lookup |
-| `query_text` | TEXT | Original voice query |
-| `query_embedding` | VECTOR(1536) | Exact vector match — checked before cosine scan |
-| `result` | JSONB | Cached result payload |
-| `expires_at` | TIMESTAMPTZ | Cache TTL |
+| `account_id` | UUID FK → `bank_accounts.id` | |
+| `query_hash` | TEXT | SHA-256 of normalised query text |
+| `query_text` | TEXT | Original query |
+| `query_embedding` | VECTOR(1536) | For cosine similarity lookup |
+| `result` | JSONB | Cached response payload including `chart_type`, `sql`, `results` |
+| `expires_at` | TIMESTAMPTZ | 24h TTL, refreshed on conflict |
 | `created_at` | TIMESTAMPTZ | |
+
+`UNIQUE (user_id, account_id, query_hash)`
 
 ---
 
 ### `voice_sessions`
-
-Tracks voice query sessions per user.
 
 | Column | Type | Notes |
 |---|---|---|
@@ -265,15 +259,13 @@ Tracks voice query sessions per user.
 
 ### `voice_messages`
 
-Individual turns within a voice session. Stores both user query and system response, plus the generated query that was executed.
-
 | Column | Type | Notes |
 |---|---|---|
 | `id` | UUID PK | |
 | `session_id` | UUID FK → `voice_sessions.id` | |
 | `role` | TEXT | user \| assistant |
 | `content` | TEXT | Spoken or generated text |
-| `generated_query` | TEXT | Nullable — SQL or pgvector query executed |
+| `generated_query` | TEXT | Nullable — SQL executed |
 | `created_at` | TIMESTAMPTZ | |
 
 ---
@@ -288,57 +280,95 @@ transactions ──< transaction_amendments
 categories ──< categories (self-referential parent_id)
 users ──< insights >── uploads
 users ──< recommendations
-users ──< query_cache
+users ──< query_cache >── bank_accounts
 users ──< voice_sessions ──< voice_messages
 ```
 
 ---
 
-## Index Strategy (planned)
+## Index Strategy
 
 | Table | Column | Index type | Purpose |
 |---|---|---|---|
 | `transactions` | `embedding` | HNSW (pgvector) | Approximate nearest-neighbour semantic search |
-| `merchants` | `location` | GIST (PostGIS) | Radius and bounding-box geospatial queries |
+| `merchants` | `location` | GIST (PostGIS) | Radius/bounding-box geospatial queries |
 | `transactions` | `transaction_date` | BRIN | Time-series range scans |
-| `query_cache` | `query_embedding` | HNSW (pgvector) | Exact vector cache hit detection |
-| `query_cache` | `query_hash` | B-tree | Secondary text-hash lookup |
+| `query_cache` | `query_embedding` | HNSW (pgvector) | Cosine similarity cache hit detection |
+| `query_cache` | `query_hash` | B-tree | Exact text-hash lookup |
 
-Indexes are not created by `create_tables.py` in the current iteration — they will be added in a migration once the ingestion pipeline is writing data.
+Indexes added via migration once ingestion pipeline is writing data.
 
 ---
 
 ## Idempotency
 
-All pipeline stages are idempotent. Running any stage twice produces the same result as running it once. Idempotency is enforced at the **database level via unique constraints** — not application logic — so it holds even if bugs exist in the application code.
+All pipeline stages are idempotent. Enforced at the **database level via unique constraints**.
 
 | Level | Table | Constraint | Conflict resolution |
 |---|---|---|---|
-| 1 — File | `uploads` | `UNIQUE (user_id, account_id, file_hash)` | REJECT — same file hash for the same account is an error; checked at the Route Handler before S3 upload |
+| 1 — File | `uploads` | `UNIQUE (user_id, account_id, file_hash)` | REJECT — checked at Route Handler before S3 upload |
 | 2 — Transaction (with ref) | `transactions` | `UNIQUE (user_id, account_id, reference_number) WHERE reference_number IS NOT NULL` | `INSERT … ON CONFLICT DO NOTHING` |
 | 2 — Transaction (no ref) | `transactions` | `UNIQUE (user_id, account_id, transaction_date, amount, normalized_merchant)` | `INSERT … ON CONFLICT DO NOTHING` |
-| 3 — Pipeline status | `uploads.status` | Application-level guard | Lambda aborts if status is `processing` or `complete`; only proceeds if `pending` |
-| 4 — Merchant | `merchants` | `UNIQUE (canonical_name)` | `INSERT … ON CONFLICT (canonical_name) DO UPDATE SET embedding = EXCLUDED.embedding, updated_at = EXCLUDED.updated_at` |
-| 5 — Insights | `insights` | `UNIQUE (user_id, period, category)` | `INSERT … ON CONFLICT DO UPDATE SET` all aggregate columns and `computed_at` |
-| 6 — Macro data | `macro_economic_data` | `UNIQUE (country_code, indicator, period)` | `INSERT … ON CONFLICT DO UPDATE SET value = EXCLUDED.value, fetched_at = EXCLUDED.fetched_at` |
-| 7 — Recommendations | `recommendations` | `UNIQUE (user_id, type, category)` | `INSERT … ON CONFLICT DO UPDATE SET` all columns |
-| 8 — Query cache | `query_cache` | `UNIQUE (user_id, query_hash)` | `INSERT … ON CONFLICT DO UPDATE SET result = EXCLUDED.result, query_embedding = EXCLUDED.query_embedding, expires_at = EXCLUDED.expires_at` |
-
-**Notes:**
-
-- `file_hash` is the SHA-256 digest of the raw CSV content. It is computed at the Route Handler before the file is written to S3 or Lambda is triggered.
-- The partial unique index on `transactions.reference_number` only applies where `reference_number IS NOT NULL`. Rows without a reference number fall through to the composite index.
-- All conflict resolution strategies (`DO NOTHING` / `DO UPDATE`) are implemented in the ingestion pipeline (Iteration 2), not the schema. The constraints exist now; the application logic referencing them will be added in Iteration 2.
+| 3 — Pipeline status | `uploads.status` | Application-level guard | Lambda aborts if status is `processing` or `complete` |
+| 4 — Merchant | `merchants` | `UNIQUE (canonical_name)` | `INSERT … ON CONFLICT DO UPDATE` |
+| 5 — Insights | `insights` | `UNIQUE (user_id, period, category)` | `INSERT … ON CONFLICT DO UPDATE` |
+| 6 — Macro data | `macro_economic_data` | `UNIQUE (country_code, indicator, period)` | `INSERT … ON CONFLICT DO UPDATE` |
+| 7 — Recommendations | `recommendations` | `UNIQUE (user_id, type, category)` | `INSERT … ON CONFLICT DO UPDATE` |
+| 8 — Query cache | `query_cache` | `UNIQUE (user_id, account_id, query_hash)` | `INSERT … ON CONFLICT DO UPDATE` |
 
 ---
 
 ## Amendment Application
 
+Effective transaction values computed at query time in `GET /api/transactions`:
+
+1. Fetch raw transactions matching filters
+2. Fetch latest amendment per `(transaction_id, field_name)` ordered by `amended_at DESC`
+3. Apply amendments:
+   ```
+   effectiveTransaction = {
+     ...transaction,
+     normalized_merchant: latestAmendment("normalized_merchant") ?? transaction.normalized_merchant,
+     category:            latestAmendment("category")            ?? transaction.category,
+     subcategory:         latestAmendment("subcategory")         ?? transaction.subcategory,
+     payment_method:      latestAmendment("payment_method")      ?? computedFromRawDescription,
+     is_amended:          true if any amendments exist
+   }
+   ```
+
+### Amendable vs immutable fields
+
+| Amendable | Immutable |
+|---|---|
+| `normalized_merchant` | `transaction_date` |
+| `category` | `amount` |
+| `subcategory` | `transaction_type` |
+| `payment_method` | `raw_description` |
+| | `reference_number` |
+
+### Merchant feedback loop
+
+When `normalized_merchant` is corrected and passes validation (3–50 chars, not a payment code, not identical to raw description), the `merchants` table is upserted with the corrected name and current category. Future normalisation runs will find the corrected name in the registry without needing the LLM.
+
+### Subcategory privacy
+
+Subcategories are private per user — stored in `transaction_amendments` scoped to `user_id`, never written to the `merchants` table. Two users at the same merchant can have different subcategories without either affecting the other.
+
+---
+
+## Idempotency Detail Notes
+
+- `file_hash` is the SHA-256 digest of the raw CSV content. Computed at the Route Handler before the file is written to S3 or Lambda is triggered.
+- The partial unique index on `transactions.reference_number` only applies where `reference_number IS NOT NULL`. Rows without a reference number fall through to the composite index.
+- All conflict resolution strategies (`DO NOTHING` / `DO UPDATE`) are implemented in the ingestion pipeline, not the schema. The constraints exist now; the application logic referencing them was added in Iteration 2.
+
+## Amendment Application — Full Detail
+
 `transactions` is append-only. User corrections go to `transaction_amendments`, never back to the original row.
 
 ### How amendments are applied
 
-Effective transaction values are computed at query time in the `GET /api/transactions` Route Handler:
+Effective transaction values are computed at query time in `GET /api/transactions`:
 
 1. Fetch raw transactions matching the query filters
 2. Collect all `transaction_id` values from the result set
@@ -354,7 +384,7 @@ Effective transaction values are computed at query time in the `GET /api/transac
      is_amended:          true if any amendments exist for this transaction
    }
    ```
-5. `payment_method` has no database column — it is computed from `raw_description` server-side and can be overridden by a `payment_method` amendment
+5. `payment_method` has no database column — computed from `raw_description` server-side, overridable by amendment
 
 ### Amendable vs immutable fields
 
@@ -374,14 +404,14 @@ When a user corrects `normalized_merchant`:
 1. The amendment is written to `transaction_amendments`
 2. The Route Handler cleans and validates the new name (3–50 characters, not a payment code, not identical to raw description)
 3. If valid, the merchant record is looked up by old `canonical_name` and updated to the new name and current `category`
-4. Future normalization runs will find the corrected name in the merchant registry and use it without needing the LLM
+4. Future normalisation runs will find the corrected name in the merchant registry without needing the LLM
 
-If validation fails, the amendment is still saved to `transaction_amendments` so the user's correction is recorded, but the `merchants` table upsert is skipped — a payment-code-looking name is not written back as a shared canonical merchant name.
+If validation fails, the amendment is still saved but the `merchants` table upsert is skipped — a payment-code-looking name is not written back as a shared canonical merchant name.
 
 ### Subcategory privacy
 
-Subcategories are **private per user**. They are stored in `transaction_amendments` scoped to `user_id` and never written to the `merchants` table or any other shared reference table. Subcategory is a personal interpretation of a transaction, not a shared fact. Two users transacting at the same merchant can have different subcategories without either affecting the other.
+Subcategories are **private per user** — stored in `transaction_amendments` scoped to `user_id`, never written to the `merchants` table. Subcategory is a personal interpretation, not a shared fact. Two users transacting at the same merchant can have different subcategories without affecting each other.
 
 ### Amendment grouping
 
-All field changes submitted in a single POST are assigned the same `amendment_group_id` (UUID). This groups simultaneous corrections — e.g., fixing both merchant name and category at once — so the audit trail shows them as a single user intent rather than separate events.
+All field changes submitted in a single POST are assigned the same `amendment_group_id` (UUID). This groups simultaneous corrections — e.g. fixing both merchant name and category at once — so the audit trail shows them as a single user intent rather than separate events.

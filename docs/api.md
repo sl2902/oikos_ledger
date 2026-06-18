@@ -5,7 +5,7 @@
 All Route Handlers are under `app/app/api/`. Every endpoint:
 
 - Requires an authenticated session (Google OAuth via NextAuth v5). Unauthenticated requests return `401 { "error": "Unauthorized" }`.
-- Returns `Content-Type: application/json`.
+- Returns `Content-Type: application/json` unless otherwise noted.
 - Uses `export const dynamic = "force-dynamic"` to opt out of Next.js static caching.
 - Scopes all queries to the authenticated `user_id` — users cannot read each other's data.
 
@@ -14,29 +14,71 @@ All Route Handlers are under `app/app/api/`. Every endpoint:
 { "error": "Human-readable message" }
 ```
 
-**Status codes used:**
+**Status codes:**
 | Code | Meaning |
 |---|---|
 | 200 | Success |
+| 201 | Created |
 | 400 | Missing or invalid request parameter |
 | 401 | Not authenticated |
 | 404 | Resource not found (or belongs to another user) |
-| 409 | Conflict — see individual endpoint notes |
+| 409 | Conflict — duplicate file, or status race condition |
 | 500 | Unhandled server error |
 
 ---
 
-## Endpoints
+## Auth
 
 ### POST /api/auth/[...nextauth]
 
-NextAuth v5 catch-all route. Handles Google OAuth sign-in, sign-out, and session refresh. Not called directly by application code — managed by Auth.js.
+NextAuth v5 catch-all. Handles Google OAuth sign-in, sign-out, and session refresh. Managed by Auth.js — not called directly by application code.
 
 ---
 
+## Bank Accounts
+
+### GET /api/bank-accounts
+
+Returns all bank accounts for the authenticated user, ordered by most recent upload.
+
+**Response:**
+```json
+{
+  "accounts": [
+    {
+      "id": "uuid",
+      "bank_name": "HDFC Bank",
+      "account_type": "savings",
+      "account_nickname": "Primary",
+      "currency": "INR"
+    }
+  ]
+}
+```
+
+### POST /api/bank-accounts
+
+Creates a new bank account for the authenticated user.
+
+**Request body:**
+```json
+{
+  "bank_name": "HDFC Bank",
+  "account_type": "savings",
+  "account_nickname": "Primary",
+  "currency": "INR"
+}
+```
+
+**Response:** `201 { "id": "uuid", ... }`
+
+---
+
+## Transactions
+
 ### GET /api/transactions
 
-Returns a paginated list of transactions for an account and month, with month-level aggregates and balance info.
+Returns a paginated list of transactions with month-level aggregates.
 
 **Query params:**
 
@@ -44,7 +86,7 @@ Returns a paginated list of transactions for an account and month, with month-le
 |---|---|---|---|
 | `account_id` | UUID | Yes | Bank account to query |
 | `month` | `YYYY-MM` | No | Filter to calendar month |
-| `date_from` | `YYYY-MM-DD` | No | Custom range start (used when `month` is absent) |
+| `date_from` | `YYYY-MM-DD` | No | Custom range start |
 | `date_to` | `YYYY-MM-DD` | No | Custom range end |
 | `category` | string | No | Filter by category name |
 | `search` | string | No | Partial match on `normalized_merchant` |
@@ -85,24 +127,18 @@ Returns a paginated list of transactions for an account and month, with month-le
 ```
 
 **Notes:**
-- Transactions are ordered `(transaction_date DESC, row_number DESC)` — newest first, with intra-day order matching the original bank statement.
-- `month_total_debits` and `month_total_credits` are computed from the **full unpaginated result** before applying `page`/`limit` — they always reflect the entire month, not just the current page.
-- `opening_balance` is derived from the oldest transaction's `closing_balance ± amount`. `closing_balance` is taken from the most recent transaction.
-- `balance_verified` and `balance_discrepancy` come from the most recent `complete` upload for the account+month, not from the transaction rows.
-- Amendments are applied server-side. Each transaction in the response reflects effective values after all amendments. `is_amended: true` indicates at least one amendment exists.
-- `payment_method` has no database column — computed from `raw_description` at query time and overridable by a `payment_method` amendment.
+- Ordered `(transaction_date DESC, row_number DESC)` — newest first, intra-day order matches original bank statement.
+- `month_total_debits` and `month_total_credits` reflect the **full unpaginated result**, not just the current page.
+- `payment_method` has no database column — computed from `raw_description` at query time and overridable by amendment.
+- Amendments applied server-side; each transaction reflects effective values. `is_amended: true` when any amendment exists.
 
 ---
 
 ### GET /api/transactions/months
 
-Returns up to the 3 most recent months that have transactions for an account. Used to populate the month tab bar.
+Returns up to the 3 most recent months that have transactions for an account.
 
-**Query params:**
-
-| Param | Type | Required | Description |
-|---|---|---|---|
-| `account_id` | UUID | Yes | Bank account to query |
+**Query params:** `account_id` (UUID, required)
 
 **Response:**
 ```json
@@ -113,18 +149,11 @@ Returns up to the 3 most recent months that have transactions for an account. Us
 ]
 ```
 
-**Notes:**
-- Returns at most 3 months. If fewer than 3 months have transactions, returns only those that do.
-- Ordered most-recent-first.
-- Cache: `force-dynamic`.
-
 ---
 
 ### GET /api/transactions/[id]/amendments
 
-Returns the full amendment history for a single transaction.
-
-**Path params:** `id` — transaction UUID
+Returns the full amendment history for a single transaction. Returns 404 if the transaction does not belong to the authenticated user.
 
 **Response:**
 ```json
@@ -132,9 +161,6 @@ Returns the full amendment history for a single transaction.
   "amendments": [
     {
       "id": "uuid",
-      "transaction_id": "uuid",
-      "amendment_group_id": "uuid",
-      "user_id": "uuid",
       "field_name": "normalized_merchant",
       "old_value": "UPI-SWIGGY-...",
       "new_value": "Swiggy",
@@ -146,17 +172,11 @@ Returns the full amendment history for a single transaction.
 }
 ```
 
-**Notes:**
-- Ordered by `amended_at DESC`.
-- Returns 404 if the transaction does not belong to the authenticated user.
-
 ---
 
 ### POST /api/transactions/[id]/amend
 
-Creates one or more amendments for a transaction in a single interaction group.
-
-**Path params:** `id` — transaction UUID
+Creates amendments for a transaction.
 
 **Request body:**
 ```json
@@ -171,24 +191,21 @@ Creates one or more amendments for a transaction in a single interaction group.
 
 **Allowed `field_name` values:** `normalized_merchant`, `category`, `subcategory`, `payment_method`
 
-**Immutable fields (rejected if submitted):** `transaction_date`, `amount`, `transaction_type`, `raw_description`, `reference_number`
+**Immutable fields (rejected):** `transaction_date`, `amount`, `transaction_type`, `raw_description`, `reference_number`
 
-**Response:**
-```json
-{ "success": true, "amendment_group_id": "uuid" }
-```
+**Response:** `{ "success": true, "amendment_group_id": "uuid" }`
 
 **Notes:**
-- All amendments in one POST are assigned the same `amendment_group_id`, grouping them as a single user interaction in the audit trail.
-- **Side effect:** if `normalized_merchant` is amended and the new value passes validation (3–50 chars, not identical to `raw_description`, not a payment code pattern), the `merchants` table row for the old `canonical_name` is updated to the new name and current `category`. This feeds future normalization runs.
-- Returns 404 if the transaction does not belong to the authenticated user.
-- Returns 400 if `amendments` is empty or contains an immutable field.
+- All amendments in one POST share the same `amendment_group_id`.
+- If `normalized_merchant` is amended and passes validation, the `merchants` table is upserted with the corrected name.
 
 ---
 
+## Categories
+
 ### GET /api/categories
 
-Returns all spending categories and subcategories from the database. Used to populate category dropdowns in the filter bar and amendment modal.
+Returns all spending categories and subcategories. Used to populate filter dropdowns and amendment modal.
 
 **Response:**
 ```json
@@ -202,34 +219,27 @@ Returns all spending categories and subcategories from the database. Used to pop
 }
 ```
 
-**Notes:**
-- `categories` contains only top-level entries (`parent_id IS NULL`), ordered alphabetically.
-- `subcategories` contains only child entries (`parent_id IS NOT NULL`), ordered alphabetically within each parent.
-- Client-side: dedupingInterval of 60 000 ms — categories change infrequently.
-- Data is seeded by `scripts/seed_categories.py` (10 top-level, 35 subcategories). Not user-generated.
-
 ---
+
+## Uploads
 
 ### POST /api/upload
 
-Accepts a CSV file, computes its SHA-256 hash, streams it to S3, creates an `uploads` row, and asynchronously invokes the Lambda ingestion pipeline.
+Accepts a CSV file, computes SHA-256 hash, streams to S3, creates an `uploads` row, and invokes Lambda.
 
-**Request:** `multipart/form-data` with field `file` (CSV) and `account_id`.
+**Request:** `multipart/form-data` with `file` (CSV) and `account_id`.
 
-**Response:**
-```json
-{ "upload_id": "uuid", "status": "pending" }
-```
+**Response:** `{ "upload_id": "uuid", "status": "pending" }`
 
 **Notes:**
-- Duplicate detection: if `(user_id, account_id, file_hash)` already exists in `uploads`, returns 409.
-- When AWS is not configured, S3 upload and Lambda invocation are skipped gracefully — the `uploads` row is still created.
+- Returns 409 if same file (by SHA-256) already uploaded for this account.
+- S3 upload and Lambda invocation skipped gracefully when AWS is not configured.
 
 ---
 
 ### GET /api/upload/[upload_id]
 
-Returns the current status of an upload. Polled by the upload modal every 1 second while status is `pending` or `processing`.
+Returns current upload status. Polled every 1 second by the upload modal.
 
 **Response:**
 ```json
@@ -249,107 +259,135 @@ Returns the current status of an upload. Polled by the upload modal every 1 seco
 
 ### DELETE /api/upload/[upload_id]
 
-Two modes selected by query parameter:
+Two modes:
 
-**Cancel mode** (no `?force=true`) — used by the upload modal during polling:
-- If status is `complete`: returns `409 { "status": "complete", "row_count": N }` — the modal detects the race condition and transitions to the success state.
-- If status is `pending`/`processing`/`failed`/`cancelled`: deletes any partial transactions, sets status to `cancelled`, returns `200 { "status": "cancelled" }`.
+**Cancel mode** (no `?force=true`) — used during polling:
+- `complete` status → 409 (race condition — modal transitions to success state)
+- Other statuses → delete partial transactions, set `cancelled`, return 200
 
-**Force-delete mode** (`?force=true`) — used by the upload history modal:
-- If status is `pending` or `processing`: returns `409 { "error": "Cannot delete an upload that is still processing" }`.
-- Otherwise: cascades deletion — amendments → transactions → upload row. Returns `200 { "status": "deleted" }`.
+**Force-delete mode** (`?force=true`) — used by upload history:
+- `pending`/`processing` → 409 (cannot delete while processing)
+- Otherwise → cascade delete amendments → transactions → upload row
 
 ---
 
 ### GET /api/uploads
 
-Returns all uploads for a bank account, ordered newest-first.
+Returns all uploads for an account, ordered newest-first.
 
-**Query params:**
-
-| Param | Type | Required | Description |
-|---|---|---|---|
-| `account_id` | UUID | Yes | Bank account to query |
-
-**Response:**
-```json
-{
-  "uploads": [
-    {
-      "id": "uuid",
-      "filename": "hdfc_may_2026.csv",
-      "status": "complete",
-      "row_count": 37,
-      "balance_verified": true,
-      "balance_discrepancy": null,
-      "opening_balance": "11200.00",
-      "closing_balance": "14350.75",
-      "uploaded_at": "2026-05-14T10:00:00Z",
-      "completed_at": "2026-05-14T10:01:23Z"
-    }
-  ]
-}
-```
+**Query params:** `account_id` (UUID, required)
 
 ---
 
-### GET /api/bank-accounts
+## Insights
 
-Returns all bank accounts for the authenticated user.
+### POST /api/insights/query
 
-**Response:**
-```json
-{
-  "accounts": [
-    {
-      "id": "uuid",
-      "bank_name": "HDFC Bank",
-      "account_type": "savings",
-      "account_nickname": "Primary",
-      "currency": "INR"
-    }
-  ]
-}
-```
-
----
-
-### POST /api/bank-accounts
-
-Creates a new bank account for the authenticated user.
+Main insights query handler. Accepts natural language questions, returns structured data and a text summary via SSE stream or JSON.
 
 **Request body:**
 ```json
 {
-  "bank_name": "HDFC Bank",
-  "account_type": "savings",
-  "account_nickname": "Primary",
-  "currency": "INR"
+  "question": "How much did I spend on food in March?",
+  "intent": null,
+  "account_id": "uuid",
+  "conversation_history": [
+    { "role": "user", "content": "..." },
+    { "role": "assistant", "content": "..." }
+  ],
+  "last_chart_type": "line",
+  "last_results": null,
+  "date_from": "2026-03-01",
+  "date_to": "2026-03-31",
+  "is_voice": false
 }
 ```
 
-**Response:** `201 { "id": "uuid", ... }`
+**Response — streaming SSE** (for fresh queries):
+```
+data: {"type":"metadata","intent":"finance_custom","intent_label":"Custom query","sql":"SELECT ...","results":[...],"chart_type":"line","row_count":13}
+
+data: {"type":"text","text":"You spent "}
+data: {"type":"text","text":"₹7,029 on food in March 2026."}
+
+data: [DONE]
+```
+
+**Response — JSON** (for cache hits, suggestions, off-topic, display commands):
+```json
+{
+  "type": "complete",
+  "intent": "finance_custom",
+  "intent_label": "Custom query",
+  "sql": "SELECT ...",
+  "results": [...],
+  "response": "You spent ₹7,029 on food in March 2026.",
+  "chart_type": "line",
+  "row_count": 13,
+  "cached": true
+}
+```
+
+**Pre-built intents** (pass as `intent` param to bypass agent):
+- `monthly_trend` — time-series aggregation (auto-selects daily/weekly/monthly based on data span)
+- `biggest_expenses` — top categories by spend
+- `credits_vs_debits` — comparison bar by month
+- `top_merchants` — top 10 merchants by spend
+- `spending_by_category` — category breakdown with percentages
+
+**Notes:**
+- `is_voice: true` suppresses text streaming and suggestions; data cards still rendered in UI.
+- `conversation_history` enables follow-up queries with full context.
+- Display commands (e.g. "show as pie chart") re-plot existing `last_results` without re-querying.
 
 ---
 
-### GET /api/insights
+### POST /api/insights/session
 
-Returns precomputed monthly spending aggregations per category. Computed by Lambda after each ingestion run.
+Returns an ephemeral OpenAI Realtime API key for the voice session. Key expires after 60 seconds; the client must connect to the Realtime WebSocket immediately.
 
----
-
-### GET /api/recommendations
-
-Returns ranked spending recommendations. Supports dismiss via `PATCH /api/recommendations/[id]`.
-
----
-
-### GET /api/macro
-
-Returns latest macroeconomic indicators (GDP growth, inflation, food inflation) for the user's country.
+**Response:**
+```json
+{
+  "value": "ek_...",
+  "expires_at": 1781807283
+}
+```
 
 ---
 
-### POST /api/voice
+### POST /api/insights/cache
 
-Accepts a transcribed natural-language query. Returns a structured data payload and a spoken response string.
+Returns a cached query result by hash. Used when the user selects a suggestion from the similarity cache.
+
+**Request body:** `{ "query_hash": "...", "account_id": "uuid" }`
+
+**Response:** Same shape as `POST /api/insights/query` JSON response.
+
+---
+
+## Recommendations
+
+### POST /api/recommendations
+
+Returns on-demand personalised spending recommendations benchmarked against RBI/HCES 2022-23 household expenditure data.
+
+**Request body:**
+```json
+{
+  "account_id": "uuid",
+  "date_from": "2026-03-01",
+  "date_to": "2026-05-31"
+}
+```
+
+**Response — streaming SSE:**
+```
+data: {"type":"card","title":"Food spending","your_pct":38,"benchmark_pct":46,"status":"on_track","insight":"Your food spending is below the national average — you're managing this well."}
+
+data: {"type":"card","title":"Health","your_pct":1,"benchmark_pct":6,"status":"below","insight":"Your health spending is well below the RBI benchmark. Consider reviewing your health insurance coverage."}
+
+data: [DONE]
+```
+
+**Status values:** `on_track` | `above` | `below`

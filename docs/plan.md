@@ -2,7 +2,10 @@
 
 ## Overview
 
-Oikos Ledger is a personal finance intelligence app. Users upload bank CSV exports, and the app normalizes, enriches, and analyses the transactions using LLMs, pgvector semantic search, and macro-economic context to produce actionable recommendations.
+Oikos Ledger is a personal finance intelligence app for Indian bank account holders. Users upload bank CSV exports, and the app normalises, enriches, and analyses transactions using LLMs, pgvector semantic search, and macroeconomic context from RBI/World Bank data to produce actionable recommendations.
+
+**Hackathon:** AWS + Vercel Hackathon — Track 1 B2C  
+**Deadline:** 29 June 2026
 
 ## Iterations
 
@@ -10,12 +13,11 @@ Oikos Ledger is a personal finance intelligence app. Users upload bank CSV expor
 |---|------|--------|
 | 0 | Foundation — environment, data model, database, scripts | **Complete** (2026-06-10) |
 | 1 | User auth and account setup — Google OAuth, JWT sessions, bank account CRUD | **Complete** (2026-06-10) |
-| 2 | CSV ingestion pipeline — parser, normalizer, embedder, geocoder | **In Progress** |
-| 3 | Transaction display — dashboard, list view, Drizzle queries | Planned |
-| 4 | Spending insights — aggregations, category breakdowns, MoM delta | Planned |
-| 5 | AI recommendations — LLM inference, ranking, recommendation cards | Planned |
-| 6 | Macro-economic context — World Bank / RBI fetch, macro page | Planned |
-| 7 | Voice interface + seed data — query via voice, seed_db.py | Planned |
+| 2 | CSV ingestion pipeline — parser, normalizer, embedder, balance verification | **Complete** |
+| 3 | Transaction display — dashboard, list view, filters, amendments | **Complete** |
+| 4 | Spending insights — agentic NL→SQL, voice interface, chart rendering | **Complete** |
+| 5 | AI recommendations — RBI benchmark comparison, LLM cards, voice | **In Progress** |
+| 6 | Demo prep — seed data, Aurora scaling, video, Devpost write-up | Planned |
 
 ---
 
@@ -78,7 +80,7 @@ Oikos Ledger is a personal finance intelligence app. Users upload bank CSV expor
 - `AddBankAccountModal` — shadcn Dialog form component
 - Drizzle queries: `getUserByEmail`, `createUser`, `getBankAccountsByUserId`, `createBankAccount`
 - `scripts/seed_categories.py` — idempotent category seeder (10 top-level, 35 subcategories)
-- `app/lib/constants/banks.ts` — 10 supported Indian banks with domains for favicon lookup
+- `app/lib/constants/banks.ts` — 4 supported Indian banks with domains for favicon lookup
 - `app/lib/constants/currencies.ts` — INR with symbol, structured for multi-currency extension
 - `app/components/bank_accounts/BankLogo.tsx` — favicon-backed logo with SVG fallback
 
@@ -112,7 +114,7 @@ Oikos Ledger is a personal finance intelligence app. Users upload bank CSV expor
 
 **Goal:** Upload a CSV from the UI, store it in S3, trigger Lambda, and parse rows into the `transactions` table.
 
-**Scope note:** Deterministic CSV parsers will be built for Axis Bank, HDFC Bank, ICICI Bank, and State Bank of India only — the four banks with confirmed CSV export formats. Other banks are unsupported until their CSV format is confirmed and a parser is implemented. The upload UI will display a clear message specifying which banks and CSV formats are accepted.
+**Scope note:** Deterministic CSV parsers built for Axis Bank, HDFC Bank, ICICI Bank, and State Bank of India only — the four banks with confirmed CSV export formats.
 
 **Deliverables:**
 - `ingestion/pipeline/constants.py` — date formats, UPI VPA/IFSC mappings, payment patterns, 18-category keyword lists (adapted from statementsparser, MIT)
@@ -121,9 +123,9 @@ Oikos Ledger is a personal finance intelligence app. Users upload bank CSV expor
 - `ingestion/pipeline/parsers/base.py` — abstract `BaseCSVParser` with header detection and amount cleaning
 - `ingestion/pipeline/parsers/hdfc.py`, `sbi.py`, `icici.py`, `axis.py` — bank-specific parsers with column maps
 - `ingestion/pipeline/parser.py` — router with fallback header-based bank detection
-- `ingestion/pipeline/normalizer.py` — two-stage: deterministic first, LLM (Claude Haiku) only for unknowns
+- `ingestion/pipeline/normalizer.py` — two-stage: deterministic first, LLM (`gpt-4o-mini`) only for unknowns
 - `ingestion/pipeline/embedder.py` — OpenAI `text-embedding-3-small`, batched, zero-vector fallback
-- `ingestion/pipeline/geocoder.py` — stub returning None (implemented in Iteration 5)
+- `ingestion/pipeline/geocoder.py` — stub returning None
 - `ingestion/db/client.py` — `write_transactions` (ON CONFLICT DO NOTHING), `update_upload_status`, `get_upload`
 - `ingestion/lambda_handler.py` — full pipeline orchestrator; supports `local_file_path` for testing without S3
 - `app/app/api/upload/route.ts` — SHA-256 dedup, S3 upload (graceful skip), Lambda invoke (graceful skip)
@@ -131,94 +133,139 @@ Oikos Ledger is a personal finance intelligence app. Users upload bank CSV expor
 - `app/app/api/transactions/route.ts` — paginated transaction list by account
 - `app/components/uploads/UploadStatementModal.tsx` — file select, upload, status polling, completion
 - `app/components/transactions/TransactionList.tsx` — date/merchant/category/amount/method table with pagination
-- Dashboard updated: account selection triggers transaction list; upload button per account card
 
 **Definition of Done:**
 - [x] `python -m pytest ingestion/tests/test_parser.py` passes (12 tests)
 - [x] `python -m pytest ingestion/tests/test_normalizer.py` passes (14 tests)
 - [x] `python -m pytest ingestion/tests/test_embedder.py` passes (5 tests)
 - [x] HDFC CSV parsing works correctly via direct script invocation
-- [x] Normalization pipeline runs end to end locally against Supabase — transactions visible in Supabase table editor
+- [x] Normalization pipeline runs end to end locally — transactions visible in Aurora
 - [x] Upload status transitions work correctly
-- [x] Duplicate file detection works — same file rejected with 409 (SHA-256 hash dedup, verified via code review and TS typecheck)
-- [x] Transaction list visible in dashboard after upload (component wired; verified via TS typecheck)
-- [x] Debit amounts shown in red, credits in green (TransactionList.tsx line 135, verified via code review)
-- [x] Payment method badge visible per transaction (TransactionList.tsx lines 128–131, verified via code review)
+- [x] Duplicate file detection works — same file rejected with 409
+- [x] Transaction list visible in dashboard after upload
+- [x] Debit amounts shown in red, credits in green
+- [x] Payment method badge visible per transaction
 - [x] `docs/architecture.md` updated
 - [x] `docs/adr/007_two_stage_normalization.md` created
-- [x] `docs/security.md` created — transmission security, storage security, auth, data privacy, known gaps, compliance notes
+- [x] `docs/security.md` created
 - [x] S3 `PutObjectCommand` hardened with explicit `ServerSideEncryption: "AES256"`
 
 ### Deviations and Notes
 
-- **Dashboard split into Server + Client Components** — `page.tsx` is a Server Component that calls `auth()` for the welcome message; `DashboardClient.tsx` holds the `useState` for selected account. This preserves both the greeting and the interactive account selection.
-- **Payment method derived from `raw_description` on the frontend** — the `transactions` table has no `payment_method` column. The TransactionList component derives the badge from the raw narration string, avoiding a schema change. This is sufficient for display.
+- **Dashboard split into Server + Client Components** — `page.tsx` is a Server Component that calls `auth()` for the welcome message; `DashboardClient.tsx` holds the `useState` for selected account.
+- **Payment method derived from `raw_description` on the frontend** — the `transactions` table has no `payment_method` column. The TransactionList component derives the badge from the raw narration string.
 - **Lambda not yet configured** — S3 upload and Lambda invocation are implemented but gracefully skipped when AWS credentials are absent. Local testing: `python -m ingestion.lambda_handler <upload_id> <account_id> <user_id> <bank_name> <path/to/file.csv>`.
-- **LLM normalization fallback in local testing** — Anthropic API key is absent from `.env.local`. The normalizer correctly fell back: merchant = raw_description[:50], category = "Other". Amazon India (Shopping), Zomato (Food), Apollo Pharmacy (Health) used the deterministic path. Add `ANTHROPIC_API_KEY` to `.env.local` to enable LLM normalization.
-- **End-to-end local test result** — 8 rows parsed, 8 normalized, 8 embedded (OpenAI), 6 inserted, 2 skipped (duplicate reference numbers from prior real statement upload). 43 total transactions visible in Supabase after test.
+- **End-to-end local test result** — 8 rows parsed, 8 normalized, 8 embedded (OpenAI), 6 inserted, 2 skipped (duplicate reference numbers). 43 total transactions visible after test.
 
 ---
 
 ## Iteration 3 — Transaction Display
 
-**Goal:** Authenticated users can view their uploaded transactions on the dashboard.
+**Goal:** Authenticated users can view, filter, search, and amend their uploaded transactions.
 
 **Deliverables:**
-- Auth.js or Clerk integration
-- Drizzle queries: `transactions`, `merchants`, `bank_accounts`
-- `api/transactions/route.ts` — paginated, filtered list
-- Dashboard page showing transaction table
-- Upload UI component
+- Paginated transaction list with date, merchant, category, amount, payment method columns
+- Filter bar: search, category, payment method, amount range, month tabs, custom date range
+- Month heading with opening balance, debits, credits, closing balance, balance verification badge
+- Amendment modal — correct merchant, category, subcategory, payment method
+- Amendment audit trail (`transaction_amendments` table)
+- Merchant registry feedback loop — user corrections update `merchants` table
+- Upload history modal with force-delete
+- Account ordering by most recent upload
+- Month-level credit/debit aggregates in month heading
+
+**Definition of Done:**
+- [x] Transaction list renders with all columns
+- [x] Filter bar filters correctly by all dimensions
+- [x] Amendment modal opens, submits, and updates transaction display
+- [x] Balance verification badge shown when `balance_verified === false`
+- [x] Upload history shows all uploads with status and delete
+- [x] Force-delete cascades amendments → transactions → upload row
+- [x] Accounts ordered by most recent upload
 
 ---
 
-## Iteration 3 — Spending Insights
+## Iteration 4 — Spending Insights and Voice Interface
 
-**Goal:** Show monthly spending breakdowns, category totals, and MoM trends.
+**Goal:** Natural language querying of transaction data via text and voice, with automatic chart rendering.
 
-**Deliverables:**
-- `pipeline/recommender.py` — insight computation (aggregations, MoM delta)
-- `api/insights/route.ts`
-- Insights page with category chart and trend line
-- `insights` table populated after each ingestion
+**Architecture:**
+- Agentic `runAgentLoop` with `run_sql` tool (replaces classify → generateSQL two-step)
+- Two-tier cache: exact SHA-256 hash → pgvector similarity (threshold 0.85)
+- OpenAI Realtime API (`gpt-realtime-2`) for voice with VAD, barge-in, tool calling
+- Pre-built intents bypass agent: monthly trend, biggest expenses, credits vs debits, top merchants, spending by category
+
+**Definition of Done:**
+- [x] Insights page with text chat interface and SSE streaming
+- [x] Agentic NL→SQL with `run_sql` tool — LLM decides whether to query or clarify
+- [x] Agent returns `chart_type` as structured tool parameter (line, bar, horizontal_bar, comparison_bar, pie, table, none)
+- [x] Auto chart rendering based on result shape
+- [x] Two-tier query cache with pgvector similarity suggestions
+- [x] Voice interface — OpenAI Realtime API WebSocket
+- [x] VAD barge-in with `conversation.item.truncate` and GainNode mute
+- [x] `end_conversation` tool with farewell flow and timed disconnect
+- [x] Voice data cards (SQL + chart/table) shown in UI during voice session
+- [x] Conversation history persisted per account in sessionStorage
+- [x] Date filter with persistence across navigation
+- [x] Off-topic guardrail in voice system prompt
+- [x] Current year injected into agent prompt (prevents year hallucination)
+- [x] `net` column removed from monthly trend pre-built intent
+
+### Deviations and Notes
+
+- **Classify → generateSQL replaced by agentic loop** — the original two-step approach lost context on follow-up queries. The `runAgentLoop` function sends the full conversation history with a `run_sql` tool; the LLM decides when to query and asks for clarification when ambiguous.
+- **`chart_type` as tool parameter** — initial approach tried to infer chart type from column names (`inferChartType`), which was too brittle for aliased columns. Chart type is now a required structured parameter in the `run_sql` tool schema; the agent always specifies it.
+- **Voice audio gate** — `audioEnabled` state causes stale closure in WebSocket handlers. Added `audioEnabledRef` (`useRef`) to read current value inside closures without re-renders.
+- **Barge-in** — `response.cancel` alone is insufficient. `conversation.item.truncate` required to sync server state. GainNode mute + `mutedItemId` ref handles client-side in-flight chunks.
+- **OpenAI proxy token limit** — dataexpert.io proxy has monthly token limits. When exhausted, falls back to direct `api.openai.com` by unsetting `OPENAI_BASE_URL`.
 
 ---
 
-## Iteration 4 — AI Recommendations
+## Iteration 5 — AI Recommendations (In Progress)
 
-**Goal:** Generate and display personalized AI recommendations based on transaction history.
+**Goal:** On-demand personalised spending recommendations benchmarked against RBI/HCES 2022-23 data, accessible via text and voice on a dedicated page.
+
+**Architecture:**
+- New page: `/app/recommendations`
+- New route: `POST /api/recommendations`
+- RBI/HCES 2022-23 household expenditure benchmarks hardcoded as reference dataset
+- On demand: compute user's spending % by category → compare to benchmarks → LLM generates 3-5 recommendation cards
+- Voice: same OpenAI Realtime API pattern as insights, recommendations context in system prompt
+
+**RBI/HCES benchmarks (% of total household expenditure):**
+- Food & beverages: 46%
+- Transport: 11%
+- Health: 6%
+- Education: 4%
+- Entertainment/recreation: 2%
+- Clothing: 5%
+- Housing: 10%
+- Miscellaneous: 16%
 
 **Deliverables:**
-- LLM prompt for recommendation generation (Anthropic)
-- `recommendations` table populated by Lambda
-- `api/recommendations/route.ts` with dismiss/save feedback
-- Recommendations page with ranked cards
+- [ ] `app/app/recommendations/page.tsx`
+- [ ] `app/components/recommendations/RecommendationsPanel.tsx`
+- [ ] `app/components/recommendations/RecommendationCard.tsx`
+- [ ] `app/app/api/recommendations/route.ts`
+- [ ] Voice interface on recommendations page
+- [ ] Benchmark comparison logic with delta calculation
+- [ ] LLM-generated recommendation cards (streamed)
+- [ ] Status indicator per card (above/below/on-track)
 
 ---
 
-## Iteration 5 — Macro-Economic Context
+## Iteration 6 — Demo Prep
 
-**Goal:** Fetch and display macro indicators (inflation, GDP growth) relevant to the user's country.
-
-**Deliverables:**
-- `sources/macro_fetch.py` — World Bank and RBI API integration
-- `macro_economic_data` table populated on a schedule
-- `api/macro/route.ts`
-- Macro page with indicator charts
-- Macro-triggered recommendations
-
----
-
-## Iteration 6 — Voice Interface + Seed Data
-
-**Goal:** Users can query their finances by voice. Seed data available for demos.
+**Goal:** App is polished, seeded, and ready for judges.
 
 **Deliverables:**
-- Voice session and message recording
-- `api/voice/route.ts` — speech-to-text → pgvector search → response
-- `query_cache` table for repeat query optimisation
-- `scripts/seed_db.py` fully implemented
-- Voice UI components
+- [ ] `scripts/seed_db.py` — realistic demo transaction data across 3 months
+- [ ] Aurora min ACU set to 0.5
+- [ ] Parser-level category normalisation (Health vs Medical)
+- [ ] Category dropdown fetching from DB (currently hardcoded)
+- [ ] Dashboard persistence filter bug fixed (active account + date filter)
+- [ ] Demo video recording
+- [ ] Devpost submission write-up
 
 ---
 
@@ -228,9 +275,7 @@ Oikos Ledger is a personal finance intelligence app. Users upload bank CSV expor
 - Mobile app
 - Shared / family accounts
 - Export to CSV / PDF
-
-## Open Questions
-
-- Voice provider: Whisper (OpenAI) vs ElevenLabs vs native browser Web Speech API
-- Auth provider: Auth.js vs Clerk
-- Infrastructure-as-code: Terraform vs CDK vs manual console
+- RDS Proxy (documented as production scaling strategy)
+- `pg_trgm` fuzzy merchant matching
+- Fine-tuned normalisation model
+- Multi-series chart pivoting (time + dimension + value)
