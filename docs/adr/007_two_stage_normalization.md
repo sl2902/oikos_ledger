@@ -58,7 +58,7 @@ Run deterministic logic for all transactions. Call the LLM only when:
 - `categorize_transaction(narration, merchant, payment_method)` — scores 18 category keyword lists; returns highest-scoring category or "Other"
 
 **Stage 2 — LLM (when `needs_llm=True`):**
-- Model: `claude-haiku-4-5-20251001` — fast and cheap for structured extraction
+- Model: `gpt-4o-mini` — fast and cheap for structured extraction
 - Prompt instructs Claude to return JSON only: `{"merchant_name", "category", "subcategory"}`
 - On failure or malformed response: falls back to raw description truncated to 50 chars, category "Other"
 - Concurrency: `asyncio.gather` with semaphore cap of 5 to avoid rate limits
