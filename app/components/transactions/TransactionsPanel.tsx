@@ -15,48 +15,13 @@ import { Pagination } from "./Pagination"
 
 export function TransactionsPanel() {
   const { selectedAccountId, accounts } = useAccounts()
-  const [filters, setFilters] = useState<TransactionFilters>(() => {
-    if (typeof window === "undefined") return {}
-    const stored = sessionStorage.getItem(
-      `txn_filters_${selectedAccountId}`
-    )
-    if (!stored) return {}
-    try {
-      const { filters: f } = JSON.parse(stored)
-      return f ?? {}
-    } catch {
-      return {}
-    }
-  })
-
-  const [selectedMonth, setSelectedMonth] = useState<string | null>(() => {
-    if (typeof window === "undefined") return null
-    const stored = sessionStorage.getItem(
-      `txn_filters_${selectedAccountId}`
-    )
-    if (!stored) return null
-    try {
-      const { month } = JSON.parse(stored)
-      return month ?? null
-    } catch {
-      return null
-    }
-  })
-
-  const [page, setPage] = useState<number>(() => {
-    if (typeof window === "undefined") return 1
-    const stored = sessionStorage.getItem(
-      `txn_filters_${selectedAccountId}`
-    )
-    if (!stored) return 1
-    try {
-      const { page: p } = JSON.parse(stored)
-      return p ?? 1
-    } catch {
-      return 1
-    }
-  })
+  const [filters, setFilters] = useState<TransactionFilters>({})
+  const [selectedMonth, setSelectedMonth] = useState<string | null>(null)
+  const [page, setPage] = useState<number>(1)
   const prevAccountId = useRef<string | null>(null)
+  const hasRestoredFilters = useRef(false)
+  const prevMonthsCountRef = useRef<number | null>(null)
+  const persistRef = useRef({ selectedMonth, filters, page })
 
   const selectedAccount = accounts.find((a) => a.id === selectedAccountId)
   const currencySymbol =
@@ -69,17 +34,37 @@ export function TransactionsPanel() {
     if (!selectedAccountId) return
 
     if (prevAccountId.current && prevAccountId.current !== selectedAccountId) {
-      // Account switched — reset and clear previous account's stored filters
-      setSelectedMonth(null)
-      setFilters({})
-      setPage(1)
-      sessionStorage.removeItem(`txn_filters_${prevAccountId.current}`)
       prevAccountId.current = selectedAccountId
+      hasRestoredFilters.current = false  // reset for new account
+      prevMonthsCountRef.current = null   // reset months-count tracking for new account
+
+      const stored = sessionStorage.getItem(`txn_filters_${selectedAccountId}`)
+      if (stored) {
+        try {
+          const { month, filters: f, page: p } = JSON.parse(stored)
+          setSelectedMonth(month ?? null)
+          setFilters({
+            ...(f ?? {}),
+            ...(month ? { month, date_from: undefined, date_to: undefined } : {}),
+          })
+          setPage(p ?? 1)
+          if (month) hasRestoredFilters.current = true
+        } catch {
+          sessionStorage.removeItem(`txn_filters_${selectedAccountId}`)
+          setSelectedMonth(null)
+          setFilters({})
+          setPage(1)
+        }
+      } else {
+        // No saved state for new account — reset to defaults
+        setSelectedMonth(null)
+        setFilters({})
+        setPage(1)
+      }
       return
     }
 
     if (prevAccountId.current === null) {
-      // Initial load — restore from sessionStorage
       prevAccountId.current = selectedAccountId
       const stored = sessionStorage.getItem(`txn_filters_${selectedAccountId}`)
       if (stored) {
@@ -87,6 +72,14 @@ export function TransactionsPanel() {
           const { month, filters: f, page: p } = JSON.parse(stored)
           if (month) {
             setSelectedMonth(month)
+            hasRestoredFilters.current = true
+          }
+          if (f) {
+            setFilters({
+              ...f,
+              ...(month ? { month, date_from: undefined, date_to: undefined } : {}),
+            })
+          } else if (month) {
             setFilters(prev => ({
               ...prev,
               month,
@@ -94,8 +87,8 @@ export function TransactionsPanel() {
               date_to: undefined,
             }))
           }
-          if (f) setFilters(f)
           if (p) setPage(p)
+          console.log("[restore] month:", month, "hasRestored:", hasRestoredFilters.current)
         } catch {
           sessionStorage.removeItem(`txn_filters_${selectedAccountId}`)
         }
@@ -103,23 +96,53 @@ export function TransactionsPanel() {
     }
   }, [selectedAccountId])
 
-  // Persist filter state on change
+  // Keep persistRef in sync with latest state each render
   useEffect(() => {
-    if (!selectedAccountId) return
-    sessionStorage.setItem(
-      `txn_filters_${selectedAccountId}`,
-      JSON.stringify({ month: selectedMonth, filters, page })
-    )
-  }, [selectedMonth, filters, page, selectedAccountId])
+    persistRef.current = { selectedMonth, filters, page }
+  })
+
+  // Write sessionStorage on unmount or account switch (effect cleanup)
+  useEffect(() => {
+    return () => {
+      if (!selectedAccountId) return
+      const { selectedMonth, filters, page } = persistRef.current
+      sessionStorage.setItem(
+        `txn_filters_${selectedAccountId}`,
+        JSON.stringify({ month: selectedMonth, filters, page })
+      )
+    }
+  }, [selectedAccountId])
+
+  // Write sessionStorage on hard refresh / tab close
+  useEffect(() => {
+    const handleUnload = () => {
+      if (!selectedAccountId) return
+      const { selectedMonth, filters, page } = persistRef.current
+      sessionStorage.setItem(
+        `txn_filters_${selectedAccountId}`,
+        JSON.stringify({ month: selectedMonth, filters, page })
+      )
+    }
+    window.addEventListener("beforeunload", handleUnload)
+    return () => window.removeEventListener("beforeunload", handleUnload)
+  }, [selectedAccountId])
 
   // Default to most recent month once available months load
   useEffect(() => {
-    if (availableMonths.length > 0 && selectedMonth === null) {
+    console.log("[availableMonths] length:", availableMonths.length, "selectedMonth:", selectedMonth, "hasRestored:", hasRestoredFilters.current)
+    if (availableMonths.length > 0 && selectedMonth === null
+        && !hasRestoredFilters.current) {
       const first = availableMonths[0].key
       setSelectedMonth(first)
       setPage(1)
-      setFilters((prev) => ({ ...prev, month: first, date_from: undefined, date_to: undefined }))
+      setFilters((prev) => ({
+        ...prev,
+        month: first,
+        date_from: undefined,
+        date_to: undefined,
+      }))
     }
+    hasRestoredFilters.current = true
   }, [availableMonths])
 
   function handleMonthChange(month: string) {
@@ -141,18 +164,36 @@ export function TransactionsPanel() {
     mutate: mutateTransactions,
     balanceVerified,
     balanceDiscrepancy: _balanceDiscrepancy,
-    monthTotalDebits,
-    monthTotalCredits,
   } = useTransactions(selectedAccountId, { ...filters, page })
+
+  // Only reliable on page 1 — hide on subsequent pages to avoid wrong values
+  const closingBalance = page === 1 && transactions.length > 0
+    ? transactions[0].closing_balance ?? null
+    : null
+
+  const openingBalance = page === 1 && transactions.length > 0
+    ? (() => {
+        const last = transactions[transactions.length - 1]
+        if (!last?.closing_balance) return null
+        const closing = Number(last.closing_balance)
+        const amount = Number(last.amount)
+        return last.transaction_type === "debit"
+          ? String(closing + amount)
+          : String(closing - amount)
+      })()
+    : null
 
   // Reset when no months available (transactions deleted)
   useEffect(() => {
-    if (!isLoading && availableMonths.length === 0) {
+    const prevCount = prevMonthsCountRef.current
+    prevMonthsCountRef.current = availableMonths.length
+    if (prevCount !== null && prevCount > 0 && availableMonths.length === 0) {
       setFilters({})
       setPage(1)
       setSelectedMonth(null)
+      hasRestoredFilters.current = false
     }
-  }, [availableMonths.length, isLoading])
+  }, [availableMonths.length])
 
   // Client-side payment_method filter uses the effective payment_method from the server
   const displayTransactions = useMemo(() => {
@@ -270,8 +311,8 @@ export function TransactionsPanel() {
               showHeader={index === 0}
               mutateTransactions={mutateTransactions}
               balanceVerified={balanceVerified}
-              monthTotalDebits={monthTotalDebits}
-              monthTotalCredits={monthTotalCredits}
+              openingBalance={openingBalance}
+              closingBalance={closingBalance}
             />
           ))
         )}
