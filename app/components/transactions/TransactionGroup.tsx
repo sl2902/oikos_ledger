@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { AlertTriangle, Pencil } from "lucide-react"
+import { AlertTriangle, Pencil, Eye, EyeOff } from "lucide-react"
 import { SUPPORTED_CURRENCIES } from "@/lib/constants/currencies"
 import type { EffectiveTransaction } from "@/types"
 import { CategoryBadge } from "./CategoryBadge"
@@ -12,25 +12,13 @@ interface Props {
   showHeader?: boolean
   mutateTransactions?: () => void
   balanceVerified?: boolean | null
-  monthTotalDebits?: string | null
-  monthTotalCredits?: string | null
+  openingBalance?: string | null
+  closingBalance?: string | null
 }
 
-export function TransactionGroup({ month, transactions, showHeader, mutateTransactions, balanceVerified, monthTotalDebits, monthTotalCredits }: Props) {
+export function TransactionGroup({ month, transactions, showHeader, mutateTransactions, balanceVerified, openingBalance, closingBalance }: Props) {
   const [amendingTransaction, setAmendingTransaction] = useState<EffectiveTransaction | null>(null)
-
-  // Transactions sorted date DESC, row_number DESC — first = most recent in group
-  const closingBalance = transactions[0]?.closing_balance ?? null
-
-  const lastTxn = transactions[transactions.length - 1]
-  const openingBalance = (() => {
-    if (!lastTxn?.closing_balance) return null
-    const closing = Number(lastTxn.closing_balance)
-    const amount = Number(lastTxn.amount)
-    return lastTxn.transaction_type === "debit"
-      ? closing + amount
-      : closing - amount
-  })()
+  const [balanceVisible, setBalanceVisible] = useState(true)
 
   const currencySymbol = transactions[0]
     ? (SUPPORTED_CURRENCIES.find((c) => c.code === transactions[0].currency)?.symbol ?? "₹")
@@ -62,11 +50,12 @@ export function TransactionGroup({ month, transactions, showHeader, mutateTransa
             <span className="text-muted-foreground">
               Opening{" "}
               <span className="font-medium text-slate-700">
-                {currencySymbol}
-                {openingBalance.toLocaleString("en-IN", {
-                  minimumFractionDigits: 2,
-                  maximumFractionDigits: 2,
-                })}
+                {balanceVisible
+                  ? `${currencySymbol}${Number(openingBalance).toLocaleString("en-IN", {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}`
+                  : "••••••"}
               </span>
             </span>
           )}
@@ -74,7 +63,7 @@ export function TransactionGroup({ month, transactions, showHeader, mutateTransa
             Debits{" "}
             <span className="font-medium text-red-500">
               –{currencySymbol}
-              {Number(monthTotalDebits ?? totalDebit).toLocaleString("en-IN", {
+              {totalDebit.toLocaleString("en-IN", {
                 minimumFractionDigits: 2,
                 maximumFractionDigits: 2,
               })}
@@ -84,21 +73,32 @@ export function TransactionGroup({ month, transactions, showHeader, mutateTransa
             Credits{" "}
             <span className="font-medium text-green-600">
               +{currencySymbol}
-              {Number(monthTotalCredits ?? totalCredit).toLocaleString("en-IN", {
+              {totalCredit.toLocaleString("en-IN", {
                 minimumFractionDigits: 2,
                 maximumFractionDigits: 2,
               })}
             </span>
           </span>
           {closingBalance != null && (
-            <span className="text-muted-foreground">
+            <span className="flex items-center gap-1 text-muted-foreground">
               Closing{" "}
               <span className="font-medium text-slate-700">
-                {currencySymbol}{Number(closingBalance).toLocaleString("en-IN", {
-                  minimumFractionDigits: 2,
-                  maximumFractionDigits: 2,
-                })}
+                {balanceVisible
+                  ? `${currencySymbol}${Number(closingBalance).toLocaleString("en-IN", {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}`
+                  : "••••••"}
               </span>
+              <button
+                onClick={() => setBalanceVisible(prev => !prev)}
+                className="ml-1 text-muted-foreground hover:text-slate-700 transition-colors"
+                title={balanceVisible ? "Hide balances" : "Show balances"}
+              >
+                {balanceVisible
+                  ? <EyeOff className="h-3.5 w-3.5" />
+                  : <Eye className="h-3.5 w-3.5" />}
+              </button>
             </span>
           )}
         </div>
