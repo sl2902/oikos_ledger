@@ -115,30 +115,29 @@ PAYMENT_METHOD_PATTERNS: dict[str, list[str]] = {
     "Wallet": ["wallet", "prepaid load"],
 }
 
-# 18 categories with Indian merchant keyword lists (scored by number of matches)
+# 11 canonical categories with Indian merchant keyword lists (scored by number of matches)
 CATEGORY_KEYWORDS: dict[str, list[str]] = {
     "Food": [
+        # Delivery & ordering
         "swiggy", "zomato", "uber eats", "ubereats", "dunzo food",
         "bigbasket", "blinkit", "zepto", "grofers", "jiomart food",
+        # Restaurants & QSR
         "dominos", "pizza hut", "kfc", "mcdonalds", "mcdonald", "burger king",
         "subway", "haldirams", "barbeque nation", "wow momo",
-        "food", "biryani", "tiffin", "dabba", "meal",
-    ],
-    "Dining": [
         "restaurant", "cafe", "dhaba", "hotel restaurant", "diner",
         "starbucks", "barista", "costa coffee", "chaayos",
         "cafe coffee day", "ccd", "dunkin", "tea stall", "juice",
         "bakery", "sweet shop", "mithai",
-    ],
-    "Groceries": [
+        # Groceries & supermarkets
         "dmart", "d-mart", "big bazaar", "reliance fresh", "reliance smart",
         "more supermarket", "nature's basket", "lulu hypermarket", "spencers",
         "supermarket", "grocery", "kirana", "vegetables", "fruits",
         "wholesale", "metro cash",
-        # Indian local vendors
         "milk", "dairy", "thota", "halli", "stor", "store",
         "mandi", "sabzi", "farm", "organic", "fresh mart",
         "provision", "vegetable", "sabziwala",
+        # Generic
+        "food", "biryani", "tiffin", "dabba", "meal",
     ],
     "Transport": [
         "uber", "ola", "rapido", "auto", "fastag", "toll", "fas tag",
@@ -168,12 +167,6 @@ CATEGORY_KEYWORDS: dict[str, list[str]] = {
         "gaming", "steam", "playstation", "xbox game", "youtube premium",
         "spotify", "gaana", "wynk", "jiosaavn",
     ],
-    "Communication": [
-        "jio recharge", "airtel recharge", "vodafone recharge", "vi recharge",
-        "bsnl recharge", "idea recharge",
-        "broadband", "fibernet", "act fibernet", "hathway",
-        "mobile recharge", "dth recharge", "tata sky", "dish tv",
-    ],
     "Health": [
         "pharmacy", "medplus", "1mg", "netmeds", "apollo pharmacy",
         "fortis", "max hospital", "aiims", "hospital", "clinic", "doctor",
@@ -187,28 +180,34 @@ CATEGORY_KEYWORDS: dict[str, list[str]] = {
         "exam fee", "cbse", "upsc", "gate",
     ],
     "Finance": [
+        # Bank charges & card payments
         "credit card payment", "cc payment", "card payment",
         "bank charges", "processing fee", "late fee", "overdue",
         "interest charged", "annual fee", "locker charges",
         "neft charges", "imps charges", "sms charges",
-        "billpay", "bill pay", "hdfcsi", "hdfc si", "standing instruction", 
-        "nach", "ecs", "credit card", "card payment", "cc pay",
-    ],
-    "Investment": [
+        "billpay", "bill pay", "hdfcsi", "hdfc si", "standing instruction",
+        "nach", "ecs", "credit card", "cc pay",
+        # Investments
         "zerodha", "groww", "upstox", "coin by zerodha", "kuvera",
         "paytm money", "nps", "ppf", "epfo", "hdfcsec",
         "sip", "mutual fund", "mf redemption", "mf purchase",
         "fixed deposit", "fd", "recurring deposit", "rd",
-        "stocks", "equity", "demat", "ipo", "hsl sec", "hsl", 
-        "securities", "shares", "stocks", "net pi", "nsdl", 
-        "cdsl", "brokerage",
-    ],
-    "Insurance": [
+        "stocks", "equity", "demat", "ipo", "hsl sec", "hsl",
+        "securities", "shares", "net pi", "nsdl", "cdsl", "brokerage",
+        # Insurance
         "lic premium", "lic of india", "max life", "hdfc life",
         "icici prudential", "sbi life", "bajaj allianz",
         "star health", "care health", "niva bupa",
         "vehicle insurance", "two wheeler insurance",
         "term insurance", "ulip",
+        # Salary & income
+        "salary", "sal cr", "payroll", "monthly salary",
+        "stipend", "wages", "remuneration",
+        "salary credit", "pay credit", "salary transfer",
+        # ATM & cash
+        "atm withdrawal", "atm cash", "cash withdrawal", "atm w/d",
+        # Interest & charges
+        "interest", "charges", "penal",
     ],
     "Housing": [
         "rent", "landlord", "house rent", "flat rent",
@@ -217,22 +216,22 @@ CATEGORY_KEYWORDS: dict[str, list[str]] = {
         "electricity bill", "gas bill", "water bill",
     ],
     "Utilities": [
+        # Communication (merged)
+        "jio recharge", "airtel recharge", "vodafone recharge", "vi recharge",
+        "bsnl recharge", "idea recharge",
+        "broadband", "fibernet", "act fibernet", "hathway",
+        "mobile recharge", "dth recharge", "tata sky", "dish tv",
+        # Utilities
         "electricity", "bescom", "msedcl", "tpddl", "cesc",
         "gas cylinder", "indane", "hp gas", "bharat gas",
         "water bill", "jal board", "municipal",
         "piped gas", "adani gas", "mahanagar gas",
     ],
-    "Salary": [
-        "salary", "sal cr", "payroll", "monthly salary",
-        "stipend", "wages", "remuneration",
-        "salary credit", "pay credit", "salary transfer",
-    ],
-    "Transfer": [
+    "Other": [
         "transfer to", "transfer from", "neft transfer",
         "imps transfer", "fund transfer", "sent to",
         "received from", "mmt/", "sft/",
     ],
-    "Other": [],
 }
 
 # Payment gateway prefixes — format: {ALPHANUM_CODE}/{PREFIX}{MERCHANT}
@@ -295,22 +294,22 @@ SUBCATEGORY_KEYWORDS: dict[str, list[str]] = {
 SUBCATEGORY_CATEGORY_MAP: dict[str, str] = {
     "Food Delivery": "Food",
     "Dining Out": "Food",
-    "Groceries": "Groceries",
+    "Groceries": "Food",
     "Ride Share": "Transport",
-    "Fuel": "Fuel",
+    "Fuel": "Transport",
     "Public Transport": "Transport",
-    "Pharmacy": "Medical",
-    "Doctor": "Medical",
+    "Pharmacy": "Health",
+    "Doctor": "Health",
     "Electricity": "Utilities",
-    "Mobile Recharge": "Recharge",
+    "Mobile Recharge": "Utilities",
     "Internet": "Utilities",
     "Streaming": "Entertainment",
     "Movies": "Entertainment",
     "Online Shopping": "Shopping",
     "Personal Care": "Shopping",
-    "EMI": "EMI",
-    "Credit Card": "Charges",
-    "Investment": "Investment",
+    "EMI": "Finance",
+    "Credit Card": "Finance",
+    "Investment": "Finance",
 }
 
 # Bank header signatures for fallback CSV format detection
