@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     # ── LLM APIs ─────────────────────────────────────────────────────────────
     anthropic_api_key: str = ""   # optional — reserved for future recommendations feature
     openai_api_key: str
-    openai_base_url: str
+    openai_base_url: str = "https://api.openai.com/v1"
 
     # ── Bedrock ───────────────────────────────────────────────────────────────
     bedrock_region: str = "ap-south-1"
