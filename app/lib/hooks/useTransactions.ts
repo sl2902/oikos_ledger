@@ -25,6 +25,8 @@ interface TransactionsResponse {
   balance_discrepancy: string | null
   month_total_debits: string | null
   month_total_credits: string | null
+  opening_balance: string | null
+  closing_balance: string | null
 }
 
 export function useTransactions(accountId: string | null, filters?: TransactionFilters) {
@@ -65,5 +67,7 @@ export function useTransactions(accountId: string | null, filters?: TransactionF
     balanceDiscrepancy: data?.balance_discrepancy ?? null,
     monthTotalDebits: data?.month_total_debits ?? null,
     monthTotalCredits: data?.month_total_credits ?? null,
+    openingBalance: data?.opening_balance ?? null,
+    closingBalance: data?.closing_balance ?? null,
   }
 }
