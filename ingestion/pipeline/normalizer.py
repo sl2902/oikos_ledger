@@ -39,6 +39,11 @@ Rules:
 - Do NOT expand abbreviations or correct partial names
 - Do NOT guess the full name if it is truncated
 - Return the merchant name exactly as it appears, just cleaned
+- NEVER include category descriptors in the merchant name
+- Strip suffixes like "- Insurance (Vehicle)", "- Dividend share",
+  "Mutual Fund Investment Finance" from the merchant name
+- Example: "Godigit - Insurance (Vehicle)" → merchant_name: "Godigit"
+- Example: "Iocl - Dividend shares" → merchant_name: "Iocl"
 
 Category must be exactly one of:
 Food, Shopping, Groceries, Transport, Fuel, Rent, EMI,
@@ -80,6 +85,17 @@ _PREFIX_PATTERN = "|".join(_GATEWAY_PREFIXES_SORTED)
 _GATEWAY_RE = re.compile(
     rf"^[A-Za-z0-9]{{6,}}/({_PREFIX_PATTERN})([A-Za-z0-9]+)$",
     re.IGNORECASE
+)
+
+_MERCHANT_SUFFIX_RE = re.compile(
+    r"\s*[-–]\s*(insurance|dividend|mutual\s+fund|shares?|investment|"
+    r"finance|banking|ltd\.?|limited|health|vehicle|stocks?).*$",
+    re.IGNORECASE,
+)
+_MERCHANT_TRAILING_RE = re.compile(
+    r"\s+(mutual\s+fund|investment|finance|banking|insurance|"
+    r"dividend|shares?|stocks?).*$",
+    re.IGNORECASE,
 )
 
 
@@ -166,8 +182,10 @@ def _parse_llm_response(text: str, narration: str) -> NormalizationResult:
         if start == -1 or end == 0:
             return _fallback_result(narration)
         data = json.loads(text[start:end])
+        raw_name = str(data.get("merchant_name") or narration)
+        cleaned = _clean_merchant_name(raw_name)
         return NormalizationResult(
-            merchant_name=str(data.get("merchant_name") or narration)[:50],
+            merchant_name=cleaned[:50],
             category=str(data.get("category") or "Other"),
             subcategory=data.get("subcategory"),
         )
@@ -181,6 +199,13 @@ def _fallback_result(narration: str) -> NormalizationResult:
         category="Other",
         subcategory=None,
     )
+
+
+def _clean_merchant_name(name: str) -> str:
+    """Strip category/descriptor suffixes from merchant names."""
+    name = _MERCHANT_SUFFIX_RE.sub("", name).strip()
+    name = _MERCHANT_TRAILING_RE.sub("", name).strip()
+    return name or name
 
 
 def detect_payment_gateway(narration: str) -> tuple[str | None, str | None]:
@@ -439,18 +464,27 @@ async def normalize_with_llm(
     """
     raw = partial["raw_description"]
     extracted_merchant = partial["merchant"]
+    if extracted_merchant:
+        extracted_merchant = _clean_merchant_name(extracted_merchant)
 
     # Step 1: merchant registry lookup by extracted merchant name
     if extracted_merchant:
         try:
             with get_session() as reg_session:
+                extracted_clean = extracted_merchant.strip().lower()
                 existing = reg_session.exec(
                     select(Merchant).where(
                         func.lower(Merchant.canonical_name).contains(
-                            extracted_merchant.strip().lower()[:20]
+                            extracted_clean[:20]
                         )
                     )
                 ).first()
+                if not existing and len(extracted_clean) > 5:
+                    all_merchants = reg_session.exec(select(Merchant)).all()
+                    for m in all_merchants:
+                        if m.canonical_name.lower() in extracted_clean:
+                            existing = m
+                            break
                 if existing:
                     log.info("Merchant registry hit", extra={
                         "extracted_merchant": extracted_merchant[:40],
