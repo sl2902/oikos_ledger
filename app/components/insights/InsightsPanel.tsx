@@ -340,20 +340,25 @@ export function InsightsPanel() {
 
         if (isVoice) {
           // Show data card but skip text bubble — model speaks the summary
-          addTurn({
-            role: "assistant",
-            content: "",
-            type: "message",
-            cached: data.cached,
-            sql: data.sql,
-            chart_type: data.chart_type,
-            results: data.results,
-            intent_label: data.intent_label,
-            intent_description: data.intent_description,
-            row_count: data.row_count,
-          })
-          return data.response ?? ""
+          // Only add data card if there are actual results or SQL to show
+          const hasData = data.results && data.results.length > 0
+          const hasSql = !!data.sql
+          if (hasData || hasSql) {
+            addTurn({
+              role: "assistant",
+              content: "",
+              type: "message",
+              cached: data.cached,
+              sql: data.sql,
+              chart_type: data.chart_type,
+              results: data.results,
+              intent_label: data.intent_label,
+              intent_description: data.intent_description,
+              row_count: data.row_count,
+            })
         }
+        return data.response ?? ""
+      }
 
         addTurn({
           role: "assistant",
@@ -1236,7 +1241,7 @@ export function InsightsPanel() {
 
         <div className="flex gap-2">
           {/* Audio toggle — only relevant when voice is not active */}
-          {!isVoiceConnected && (
+          {/* {!isVoiceConnected && (
             <button
               onClick={() => {
                 setAudioEnabled(prev => {
@@ -1253,7 +1258,7 @@ export function InsightsPanel() {
             >
               {audioEnabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
             </button>
-          )}
+          )} */}
 
           {/* Voice connect/disconnect */}
           <button

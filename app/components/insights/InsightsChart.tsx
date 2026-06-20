@@ -153,11 +153,16 @@ export function InsightsChart({ chartType, data }: Props) {
   }
 
   if (activeChartType === "comparison_bar") {
+    const xKey = data[0]
+    ? (Object.keys(data[0]).find(k =>
+        ["month", "week", "day", "normalized_merchant", "category"].includes(k)
+      ) ?? "month")
+    : "month"
     return (
       <ResponsiveContainer width="100%" height={280}>
         <BarChart data={normalizedData}>
           <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-          <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+          <XAxis dataKey={xKey} tick={{ fontSize: 11 }} />
           <YAxis tickFormatter={formatAmount} tick={{ fontSize: 11 }} />
           <Tooltip formatter={(v) => formatAmount(v)} />
           <Legend />

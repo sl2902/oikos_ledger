@@ -345,6 +345,9 @@ SQL Rules (always enforced):
   If the user asks about payment method, explain that this
   information is not available in the transaction data, and
   offer to break down by merchant or category instead.
+- The following questions should always be answered with run_sql:
+  "credits vs debits", "credits versus debits", "income vs expenses" → 
+  query debits and credits grouped by month
 
 Behaviour:
   - Use run_sql when the user asks about their financial data
@@ -402,13 +405,15 @@ async function runAgentLoop(
               type: "string",
               enum: ["line", "bar", "horizontal_bar", "comparison_bar", "pie", "table", "none"],
               description: `Pick the best visualization for the query result:
-- line: time series with one numeric value (day/week/month + total)
-- bar: category or merchant ranked by total (vertical)
-- horizontal_bar: top merchants or long category names (horizontal)
-- comparison_bar: two numeric values per time period (debits vs credits)
-- pie: category breakdown with percentages
-- table: multi-dimension results, text-heavy, or anything else
-- none: single scalar value (one number answer)`,
+              - line: ALWAYS use when query groups by day/week/month over time — any time series, trends, "by month", "by day", "by week", "over time", "last N months"
+              - bar: category or merchant ranked by total amount (vertical bars) — use when comparing named groups, NOT time periods
+              - horizontal_bar: top merchants ranked by spend (horizontal) — use when there are many items or long labels
+              - comparison_bar: exactly two numeric values per time period (debits AND credits by month)
+              - pie: category breakdown showing proportions/percentages of a whole
+              - table: multi-dimension results, raw transaction lists, or anything with 3+ columns
+              - none: single scalar answer (one number, e.g. "total spent in March")
+
+              CRITICAL: If the query has a time column (day/week/month/date), ALWAYS use line, bar, or comparison_bar — never table.`,
             },
           },
           required: ["sql", "chart_type"],
@@ -625,6 +630,28 @@ export async function POST(request: Request) {
     }
   }
 
+  // Natural language → pre-built intent mapping
+  // Catches conversational variants that don't go through quick buttons
+  const resolvedIntent = intent ?? (() => {
+    const q = (question ?? "").toLowerCase()
+    if (!q) return null
+    if (q.includes("credit") && (q.includes("debit") || q.includes("expense")))
+      return "credits_vs_debits"
+    if ((q.includes("monthly") || q.includes("month")) &&
+        (q.includes("trend") || q.includes("over time") || q.includes("chart")))
+      return "monthly_trend"
+    if (q.includes("biggest") || q.includes("largest") || q.includes("top expense"))
+      return "biggest_expenses"
+    if (q.includes("top merchant") || q.includes("top merchants") ||
+      q.includes("most spent") || q.includes("where did i spend") ||
+      ((q.includes("top") || q.includes("most")) && q.includes("merchant")))
+      return "top_merchants"
+    if (q.includes("spending by category") || q.includes("category breakdown") ||
+        q.includes("breakdown by category"))
+      return "spending_by_category"
+    return null
+  })()
+
   // Two-tier cache lookup
   const cacheText = intent
     ? `intent:${intent}:${date_from ?? ""}:${date_to ?? ""}`
@@ -655,19 +682,19 @@ export async function POST(request: Request) {
   }
 
   // Pre-built intent fast path — bypasses agent entirely
-  const isPrebuilt = intent && INTENTS[intent as keyof typeof INTENTS]
+  const isPrebuilt = resolvedIntent && INTENTS[resolvedIntent as keyof typeof INTENTS]
 
   if (isPrebuilt) {
-    const intentConfig = INTENTS[intent as keyof typeof INTENTS]
+    const intentConfig = INTENTS[resolvedIntent as keyof typeof INTENTS]
     let querySQL = intentConfig.sql(userId, account_id, dateFilter)
     const chartType = intentConfig.chart_type
     let intentLabel = intentConfig.label
     let intentDescription = intentConfig.description
     const isCustom = false
-    const resolvedIntent = intent
+    const finalIntent = resolvedIntent
 
     // Monthly trend: pick daily / weekly / monthly based on data span
-    if (resolvedIntent === "monthly_trend") {
+    if (finalIntent === "monthly_trend") {
       console.log("Final querySQL:", querySQL)
       console.log("dateFilter:", dateFilter)
       console.log("account_id:", account_id)
@@ -775,7 +802,7 @@ export async function POST(request: Request) {
           try {
             const metadata = {
               type: "metadata",
-              intent: resolvedIntent,
+              intent: finalIntent,
               intent_label: intentLabel,
               intent_description: intentDescription,
               is_custom: isCustom,
@@ -838,7 +865,7 @@ Summarize these results accurately.`,
 
             const responsePayload = {
               question: question || intentLabel,
-              intent: resolvedIntent,
+              intent: finalIntent,
               intent_label: intentLabel,
               intent_description: intentDescription,
               is_custom: isCustom,
@@ -929,7 +956,7 @@ Summarize these results accurately.`,
   const intentLabel = "Custom query"
   const intentDescription = "Natural language → SQL"
   const isCustom = true
-  const resolvedIntent = "finance_custom"
+  const customQueryIntent = "finance_custom"
 
   const encoder = new TextEncoder()
   let fullResponseText = ""
@@ -939,7 +966,7 @@ Summarize these results accurately.`,
       try {
         const metadata = {
           type: "metadata",
-          intent: resolvedIntent,
+          intent: customQueryIntent,
           intent_label: intentLabel,
           intent_description: intentDescription,
           is_custom: isCustom,
@@ -970,7 +997,7 @@ Summarize these results accurately.`,
 
         const responsePayload = {
           question,
-          intent: resolvedIntent,
+          intent: customQueryIntent,
           intent_label: intentLabel,
           intent_description: intentDescription,
           is_custom: isCustom,
