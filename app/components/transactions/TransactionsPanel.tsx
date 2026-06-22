@@ -15,13 +15,41 @@ import { Pagination } from "./Pagination"
 
 export function TransactionsPanel() {
   const { selectedAccountId, accounts } = useAccounts()
-  const [filters, setFilters] = useState<TransactionFilters>({})
-  const [selectedMonth, setSelectedMonth] = useState<string | null>(null)
-  const [page, setPage] = useState<number>(1)
-  const prevAccountId = useRef<string | null>(null)
-  const hasRestoredFilters = useRef(false)
+  const storageKey = selectedAccountId ? `oikos_filters_acc_${selectedAccountId}` : null
+
+  const [filters, setFilters] = useState<TransactionFilters>(() => {
+    if (typeof window !== "undefined" && storageKey) {
+      const saved = localStorage.getItem(storageKey)
+      if (saved) {
+        try { return JSON.parse(saved).filters || {} } catch { return {} }
+      }
+    }
+    return {}
+  })
+
+  const [selectedMonth, setSelectedMonth] = useState<string | null>(() => {
+    if (typeof window !== "undefined" && storageKey) {
+      const saved = localStorage.getItem(storageKey)
+      if (saved) {
+        try { return JSON.parse(saved).selectedMonth || null } catch { return null }
+      }
+    }
+    return null
+  })
+
+  const [page, setPage] = useState<number>(() => {
+    if (typeof window !== "undefined" && storageKey) {
+      const saved = localStorage.getItem(storageKey)
+      if (saved) {
+        try { return JSON.parse(saved).page || 1 } catch { return 1 }
+      }
+    }
+    return 1
+  })
+
+  const prevAccountId = useRef<string | null>(selectedAccountId)
+  const isInitializingRef = useRef<string | null>(null)
   const prevMonthsCountRef = useRef<number | null>(null)
-  const persistRef = useRef({ selectedMonth, filters, page })
 
   const selectedAccount = accounts.find((a) => a.id === selectedAccountId)
   const currencySymbol =
@@ -29,121 +57,69 @@ export function TransactionsPanel() {
 
   const { availableMonths, mutate: mutateMonths } = useAvailableMonths(selectedAccountId)
 
-  // Consolidated account change + restore effect
+  // Effect A: Restore filters when account switches
   useEffect(() => {
-    if (!selectedAccountId) return
-
-    if (prevAccountId.current && prevAccountId.current !== selectedAccountId) {
+    if (selectedAccountId && selectedAccountId !== prevAccountId.current) {
       prevAccountId.current = selectedAccountId
-      hasRestoredFilters.current = false  // reset for new account
-      prevMonthsCountRef.current = null   // reset months-count tracking for new account
+      isInitializingRef.current = selectedAccountId
 
-      const stored = sessionStorage.getItem(`txn_filters_${selectedAccountId}`)
-      if (stored) {
+      const saved = localStorage.getItem(`oikos_filters_acc_${selectedAccountId}`)
+      if (saved) {
         try {
-          const { month, filters: f, page: p } = JSON.parse(stored)
-          setSelectedMonth(month ?? null)
-          setFilters({
-            ...(f ?? {}),
-            ...(month ? { month, date_from: undefined, date_to: undefined } : {}),
-          })
-          setPage(p ?? 1)
-          if (month) hasRestoredFilters.current = true
-        } catch {
-          sessionStorage.removeItem(`txn_filters_${selectedAccountId}`)
-          setSelectedMonth(null)
-          setFilters({})
-          setPage(1)
-        }
-      } else {
-        // No saved state for new account — reset to defaults
-        setSelectedMonth(null)
-        setFilters({})
-        setPage(1)
+          const parsed = JSON.parse(saved)
+          setFilters(parsed.filters || {})
+          setSelectedMonth(parsed.selectedMonth || null)
+          setPage(parsed.page || 1)
+          setTimeout(() => { isInitializingRef.current = null }, 0)
+          return
+        } catch {}
       }
-      return
-    }
-
-    if (prevAccountId.current === null) {
-      prevAccountId.current = selectedAccountId
-      const stored = sessionStorage.getItem(`txn_filters_${selectedAccountId}`)
-      if (stored) {
-        try {
-          const { month, filters: f, page: p } = JSON.parse(stored)
-          if (month) {
-            setSelectedMonth(month)
-            hasRestoredFilters.current = true
-          }
-          if (f) {
-            setFilters({
-              ...f,
-              ...(month ? { month, date_from: undefined, date_to: undefined } : {}),
-            })
-          } else if (month) {
-            setFilters(prev => ({
-              ...prev,
-              month,
-              date_from: undefined,
-              date_to: undefined,
-            }))
-          }
-          if (p) setPage(p)
-          console.log("[restore] month:", month, "hasRestored:", hasRestoredFilters.current)
-        } catch {
-          sessionStorage.removeItem(`txn_filters_${selectedAccountId}`)
-        }
-      }
-    }
-  }, [selectedAccountId])
-
-  // Keep persistRef in sync with latest state each render
-  useEffect(() => {
-    persistRef.current = { selectedMonth, filters, page }
-  })
-
-  // Write sessionStorage on unmount or account switch (effect cleanup)
-  useEffect(() => {
-    return () => {
-      if (!selectedAccountId) return
-      const { selectedMonth, filters, page } = persistRef.current
-      sessionStorage.setItem(
-        `txn_filters_${selectedAccountId}`,
-        JSON.stringify({ month: selectedMonth, filters, page })
-      )
-    }
-  }, [selectedAccountId])
-
-  // Write sessionStorage on hard refresh / tab close
-  useEffect(() => {
-    const handleUnload = () => {
-      if (!selectedAccountId) return
-      const { selectedMonth, filters, page } = persistRef.current
-      sessionStorage.setItem(
-        `txn_filters_${selectedAccountId}`,
-        JSON.stringify({ month: selectedMonth, filters, page })
-      )
-    }
-    window.addEventListener("beforeunload", handleUnload)
-    return () => window.removeEventListener("beforeunload", handleUnload)
-  }, [selectedAccountId])
-
-  // Default to most recent month once available months load
-  useEffect(() => {
-    console.log("[availableMonths] length:", availableMonths.length, "selectedMonth:", selectedMonth, "hasRestored:", hasRestoredFilters.current)
-    if (availableMonths.length > 0 && selectedMonth === null
-        && !hasRestoredFilters.current) {
-      const first = availableMonths[0].key
-      setSelectedMonth(first)
+      setFilters({})
+      setSelectedMonth(null)
       setPage(1)
-      setFilters((prev) => ({
-        ...prev,
-        month: first,
-        date_from: undefined,
-        date_to: undefined,
-      }))
+      setTimeout(() => { isInitializingRef.current = null }, 0)
     }
-    hasRestoredFilters.current = true
-  }, [availableMonths])
+  }, [selectedAccountId])
+
+  // Effect B: Persist filters to localStorage on every change
+  useEffect(() => {
+    if (storageKey && isInitializingRef.current !== selectedAccountId) {
+      localStorage.setItem(storageKey, JSON.stringify({ filters, selectedMonth, page }))
+    }
+  }, [filters, selectedMonth, page, storageKey, selectedAccountId])
+
+  // Effect C: Default to most recent month only if nothing was restored
+  useEffect(() => {
+    if (availableMonths.length > 0) {
+      const availableKeys = availableMonths.map(m => m.key)
+      const saved = storageKey ? localStorage.getItem(storageKey) : null
+      let storedMonth: string | null = null
+      if (saved) {
+        try { storedMonth = JSON.parse(saved).selectedMonth || null } catch {}
+      }
+
+      // If restored month no longer exists in available months, reset to most recent
+      if (storedMonth && storedMonth !== "custom" && !availableKeys.includes(storedMonth)) {
+        setSelectedMonth(availableMonths[0].key)
+        setFilters(prev => ({
+          ...prev,
+          month: availableMonths[0].key,
+          date_from: undefined,
+          date_to: undefined,
+        }))
+        return
+      }
+
+      if (storedMonth && selectedMonth !== storedMonth && isInitializingRef.current === selectedAccountId) {
+        setSelectedMonth(storedMonth)
+        return
+      }
+
+      if (!selectedMonth && !storedMonth) {
+        setSelectedMonth(availableMonths[0].key)
+      }
+    }
+  }, [availableMonths, selectedMonth, storageKey, selectedAccountId])
 
   function handleMonthChange(month: string) {
     setSelectedMonth(month)
@@ -155,6 +131,22 @@ export function TransactionsPanel() {
     }
   }
 
+  function handleFilterChange(newFilters: TransactionFilters) {
+    setFilters(newFilters)
+    setPage(1)
+  }
+
+  const transactionFilters = useMemo<TransactionFilters>(() => {
+    const activeMonthFilter = selectedMonth === "custom"
+      ? undefined
+      : (selectedMonth ?? (availableMonths[0]?.key || undefined))
+    return {
+      ...filters,
+      month: activeMonthFilter,
+      page,
+    }
+  }, [filters, selectedMonth, page, availableMonths])
+
   const {
     transactions,
     total,
@@ -164,7 +156,7 @@ export function TransactionsPanel() {
     mutate: mutateTransactions,
     balanceVerified,
     balanceDiscrepancy: _balanceDiscrepancy,
-  } = useTransactions(selectedAccountId, { ...filters, page })
+  } = useTransactions(selectedAccountId, transactionFilters)
 
   // Only reliable on page 1 — hide on subsequent pages to avoid wrong values
   const closingBalance = page === 1 && transactions.length > 0
@@ -191,7 +183,6 @@ export function TransactionsPanel() {
       setFilters({})
       setPage(1)
       setSelectedMonth(null)
-      hasRestoredFilters.current = false
     }
   }, [availableMonths.length])
 
@@ -261,7 +252,7 @@ export function TransactionsPanel() {
       <div className="bg-background shrink-0">
         <FilterBar
           filters={filters}
-          onChange={(f) => { setFilters(f); setPage(1) }}
+          onChange={handleFilterChange}
           availableMonths={availableMonths}
           selectedMonth={selectedMonth}
           onMonthChange={handleMonthChange}

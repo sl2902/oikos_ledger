@@ -1,1 +1,2 @@
-// Re-exports for recommendation UI components — recommendation card, action buttons, and empty state
+export { RecommendationCard } from "./RecommendationCard"
+export { RecommendationsPanel } from "./RecommendationsPanel"

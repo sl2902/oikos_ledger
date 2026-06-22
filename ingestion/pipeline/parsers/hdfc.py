@@ -36,9 +36,66 @@ class HDFCParser(BaseCSVParser):
         """Handle HDFC-specific narration patterns.
 
         Patterns handled:
+        - ACH C-        → Finance / Dividend (inward ACH credit)
         - IB BILLPAY DR → Finance / Credit Card
         """
-        if "IB BILLPAY DR" in narration.upper():
+        upper = narration.upper()
+
+        if upper.startswith("POSDEC"):
+            return NarrationResult(
+                merchant="POS Decline Charge",
+                payment_method="Other",
+                category="Finance",
+                subcategory=None,
+                needs_llm=False,
+            )
+
+        if upper.startswith("POS/"):
+            # Format: POS/<MERCHANT>/<CITY>/<DATE>/<TIME>
+            pos_match = re.match(r'POS/([^/]+)/', narration, re.IGNORECASE)
+            if pos_match:
+                merchant = pos_match.group(1).strip().title()
+                return NarrationResult(
+                    merchant=merchant,
+                    payment_method="POS",
+                    category="Other",
+                    subcategory=None,
+                    needs_llm=True,
+                )
+
+        if upper.startswith("POS ") and re.match(r'POS \d', narration, re.IGNORECASE):
+            # Format: POS <CARD> <REF> <DATE> <TIME> <CITY> <MERCHANT>
+            # tokens: POS(0) CARD(1) REF(2) DATE(3) TIME(4) CITY(5) MERCHANT(6+)
+            parts = narration.split()
+            if len(parts) >= 7:
+                merchant_raw = " ".join(parts[6:]).strip().title()
+                return NarrationResult(
+                    merchant=merchant_raw,
+                    payment_method="POS",
+                    category="Other",
+                    subcategory=None,
+                    needs_llm=True,
+                )
+
+        if upper.startswith("ACH C-"):
+            # Format: ACH C- <COMPANY>-<REF>
+            ach_match = re.match(
+                r'ACH C-\s*([^-]+)-.*$', narration, re.IGNORECASE
+            )
+            if ach_match:
+                merchant = ach_match.group(1).strip().title()
+            else:
+                merchant = "ACH Credit"
+
+            return NarrationResult(
+                merchant=merchant,
+                payment_method="Bank Transfer",
+                category="Finance",
+                subcategory="Dividend",
+                needs_llm=False,
+            )
+
+        if "IB BILLPAY DR" in upper:
             bill_match = re.match(
                 r'IB\s+BILLPAY\s+DR-([^-]+)-', narration, re.IGNORECASE
             )

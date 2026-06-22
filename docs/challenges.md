@@ -44,18 +44,67 @@ When users specify a month without a year (e.g. "March"), `gpt-4o-mini` defaults
 
 ---
 
-## 3. Voice Interface — Barge-In and Audio Overlap
+## 3. Voice Interface — Multiple Failure Modes
 
-With a WebSocket connection, the OpenAI Realtime API streams audio faster than it plays. When the user barge-ins, the server cancels the response but audio chunks already in flight continue playing briefly.
+The real-time voice interface introduced several unexpected failure
+modes during live testing.
+
+### Dead Silence and Broken Endings
+
+When a user finished speaking, the microphone stream would
+occasionally hang open in silence instead of closing cleanly.
+If the local audio buffer was configured too small, chunks of
+live audio were dropped entirely, resulting in sudden cut-offs
+and broken responses. Getting the buffer size and stream teardown
+sequence right required significant iteration.
+
+**Fix:** ScriptProcessor buffer raised from 512 to 4096 samples.
+Audio drain implemented on interrupt. `CLOSE_WHEN_DONE` shutdown
+protocol added to ensure the stream closes cleanly after the
+final audio chunk is played.
+
+### Barge-In and Voice Overlap
+
+Handling interruptions was messy. If the user spoke over the AI
+while it was delivering a response, the model continued generating
+audio instead of switching to listen mode. This caused both voices
+to overlap simultaneously because the event loop could not purge
+the old playback buffers fast enough before new audio arrived.
 
 **Current approach:**
-- `interrupt_response: true` in `turn_detection` — server auto-cancels on VAD start
-- `conversation.item.truncate` sent with `audio_end_ms` = samples actually played
-- GainNode mute (gain = 0) on `speech_started` — silences buffered chunks immediately
-- `mutedItemId` ref — skips delta scheduling for the truncated item's in-flight chunks
+- `interrupt_response: true` in `turn_detection` — server
+  auto-cancels on VAD start
+- `conversation.item.truncate` sent with `audio_end_ms` = samples
+  actually played
+- GainNode mute (gain = 0) on `speech_started` — silences buffered
+  chunks immediately
+- `mutedItemId` ref — skips delta scheduling for the truncated
+  item's in-flight chunks
 - `response.created` restores gain for the new response
 
-**Residual overlap:** Small audio window between mute and the last in-flight chunk being scheduled can still result in brief bleed-through. Acceptable for hackathon demo; production fix would require a more granular AudioBufferSourceNode cancellation strategy.
+**Residual overlap:** Small audio window between mute and the last
+in-flight chunk being scheduled can still result in brief
+bleed-through. Acceptable for hackathon demo; production fix would
+require more granular AudioBufferSourceNode cancellation.
+
+### Handshake Failures and SQL Hallucinations
+
+Mid-build schema updates to the OpenAI Realtime API session
+configuration broke the WebSocket handshake entirely, requiring
+a full session teardown and reconnect flow to be rebuilt.
+Separately, the model occasionally hallucinated raw database
+values or generated broken SQL strings directly into the voice
+channel before strict validation filters and system prompt
+guardrails were put in place.
+
+### Duplicate Turn Bubbles
+
+Out-of-order audio delta events caused the same assistant turn
+to render as two separate bubbles in the chat UI. Fixed by
+keying turns on a stable `item_id` rather than insertion order,
+and guarding `addTurn` with a `hasData || hasSql` check to
+suppress empty bubbles from events that fired before content
+arrived.
 
 ---
 
@@ -134,3 +183,45 @@ The dataexpert.io proxy (`OPENAI_BASE_URL`) has monthly token limits. When exhau
 Cache entries written before the `chart_type` agent parameter was implemented store `chart_type: "table"` for all custom queries. These are served from cache with the wrong chart type until they expire (24h TTL) or until the cache is cleared.
 
 **Fix:** `DELETE FROM query_cache WHERE user_id = '...' AND account_id = '...'` to force fresh queries.
+
+---
+
+## 13. AWS Bedrock Normalizer Abandoned Mid-Build
+
+The ingestion pipeline was originally designed to use AWS Bedrock
+with Claude Haiku as the LLM normalizer, keeping all inference
+within the AWS ecosystem alongside Lambda and Aurora.
+
+In practice, accessing Anthropic models on Bedrock requires a
+first-time model access approval that is not instant. While waiting,
+cross-region inference profiles were attempted along with various
+model parameter combinations — none worked reliably within the
+hackathon timeline.
+
+The pipeline was reverted to OpenAI for normalization.
+`BedrockNormalizerClient` in `ingestion/pipeline/bedrock_normalizer.py`
+exists and is selectable via `NORMALIZER_PROVIDER=bedrock` in config,
+but was never used in production.
+
+**Lesson:** Request Bedrock model access before starting a build that
+depends on it. Approval can take 24–48 hours.
+
+---
+
+## 14. Aurora Default Creation Flow Blocked Password Setup
+
+Aurora Serverless v2 has a specific provisioning sequence when
+enabling both IAM authentication and password-based access.
+The default cluster creation flow in the AWS console silently
+skipped the master password configuration step when IAM
+authentication was selected first.
+
+The result was a cluster that was reachable and showed as
+`Available` but rejected all password-based connection attempts
+with an authentication error — indistinguishable from a
+network or security group misconfiguration at first glance.
+
+**Fix:** Create the cluster with password authentication enabled
+first, verify connectivity, then enable IAM authentication as a
+separate step. Do not rely on the default console wizard when
+both authentication modes are required.

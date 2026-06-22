@@ -130,6 +130,7 @@ class Transaction(SQLModel, table=True):
     reference_number: Optional[str] = Field(default=None)
     category: str
     subcategory: Optional[str] = Field(default=None)
+    payment_method: str
     location: Optional[Any] = Field(
         default=None,
         sa_column=Column("location", Geometry("POINT", srid=4326), nullable=True),

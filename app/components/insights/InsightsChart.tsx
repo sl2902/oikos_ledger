@@ -81,7 +81,7 @@ export function InsightsChart({ chartType, data }: Props) {
           {valueKeys.map((key, i) => (
             <Line
               key={key}
-              type="monotone"
+              type="linear"
               dataKey={key}
               stroke={LINE_COLORS[i % LINE_COLORS.length]}
               name={key.replace(/_/g, " ")}
@@ -99,7 +99,7 @@ export function InsightsChart({ chartType, data }: Props) {
       ? Object.keys(data[0]).find(k => k === "total" || k === "amount") ?? "total"
       : "total"
     const nameKey = data[0]
-      ? Object.keys(data[0]).find(k => k === "category" || k === "normalized_merchant") ?? "category"
+      ? Object.keys(data[0]).find(k => k === "subcategory" || k === "category" || k === "normalized_merchant") ?? "category"
       : "category"
 
     return (
@@ -130,7 +130,7 @@ export function InsightsChart({ chartType, data }: Props) {
       ? Object.keys(data[0]).find(k => k === "total" || k === "amount") ?? "total"
       : "total"
     const nameKey = data[0]
-      ? Object.keys(data[0]).find(k => k === "category" || k === "normalized_merchant") ?? "category"
+      ? Object.keys(data[0]).find(k => k === "subcategory" || k === "category" || k === "normalized_merchant") ?? "category"
       : "category"
 
     return (
@@ -168,6 +168,45 @@ export function InsightsChart({ chartType, data }: Props) {
           <Legend />
           <Bar dataKey="debits" fill="#ef4444" name="Debits" radius={[4, 4, 0, 0]} />
           <Bar dataKey="credits" fill="#10b981" name="Credits" radius={[4, 4, 0, 0]} />
+        </BarChart>
+      </ResponsiveContainer>
+    )
+  }
+
+  if (activeChartType === "multi_bar") {
+    const xKey = data[0]
+      ? (Object.keys(data[0]).find(k =>
+          ["month", "week", "day", "date"].includes(k)
+        ) ?? Object.keys(data[0])[0])
+      : "month"
+
+    const seriesKeys = Object.keys(normalizedData[0] ?? {}).filter(k =>
+      k !== xKey &&
+      normalizedData.every(d => d[k] !== null && !isNaN(Number(d[k])))
+    )
+
+    const BAR_COLORS = [
+      "#6366f1", "#10b981", "#f59e0b", "#ef4444",
+      "#3b82f6", "#8b5cf6", "#ec4899", "#14b8a6",
+    ]
+
+    return (
+      <ResponsiveContainer width="100%" height={320}>
+        <BarChart data={normalizedData}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+          <XAxis dataKey={xKey} tick={{ fontSize: 11 }} />
+          <YAxis tickFormatter={formatAmount} tick={{ fontSize: 11 }} />
+          <Tooltip formatter={(v) => formatAmount(v)} />
+          <Legend />
+          {seriesKeys.map((key, i) => (
+            <Bar
+              key={key}
+              dataKey={key}
+              name={key.replace(/_/g, " ")}
+              fill={BAR_COLORS[i % BAR_COLORS.length]}
+              radius={[4, 4, 0, 0]}
+            />
+          ))}
         </BarChart>
       </ResponsiveContainer>
     )

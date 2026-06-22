@@ -110,7 +110,7 @@ export async function GET(request: Request) {
       category: amendments?.get("category") ?? txn.category,
       subcategory: amendments?.get("subcategory") ?? txn.subcategory,
       payment_method:
-        amendments?.get("payment_method") ?? computePaymentMethod(txn.raw_description),
+        amendments?.get("payment_method") ?? txn.payment_method ?? computePaymentMethod(txn.raw_description),
       is_amended: !!amendments,
     }
   })

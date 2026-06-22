@@ -142,9 +142,8 @@ CATEGORY_KEYWORDS: dict[str, list[str]] = {
     "Transport": [
         "uber", "ola", "rapido", "auto", "fastag", "toll", "fas tag",
         "metro card", "bus pass", "irctc train", "train ticket",
-        "petrol", "fuel", "diesel", "hpcl", "iocl", "bpcl",
-        "hp petrol", "indian oil", "bharat petroleum",
-        "parking", "valet", "cab",
+        "petrol", "fuel", "diesel","hp petrol", "indian oil", 
+        "bharat petroleum", "parking", "valet", "cab",
     ],
     "Travel": [
         "irctc", "makemytrip", "goibibo", "cleartrip", "yatra", "easemytrip",
@@ -260,8 +259,8 @@ SUBCATEGORY_KEYWORDS: dict[str, list[str]] = {
                   "reliance fresh", "spencer", "nature basket"],
     # Transport
     "Ride Share": ["uber", "ola", "rapido", "meru", "blablacar"],
-    "Fuel": ["petrol", "diesel", "hpcl", "iocl", "bpcl",
-             "indian oil", "bharat petroleum", "hp petro"],
+    "Fuel": ["petrol", "diesel", "indian oil", "bharat petroleum", 
+                    "hp petro"],
     "Public Transport": ["metro", "bmtc", "best bus", "irctc",
                          "railway", "ksrtc"],
     # Health

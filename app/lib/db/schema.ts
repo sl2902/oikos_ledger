@@ -151,6 +151,7 @@ export const transactions = pgTable("transactions", {
   reference_number: text("reference_number"),
   category: text("category").notNull(),
   subcategory: text("subcategory"),
+  payment_method: text("payment_method"),
   location: geometry("location"),
   embedding: vector("embedding", { dimensions: 1536 }).notNull(),
   created_at: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

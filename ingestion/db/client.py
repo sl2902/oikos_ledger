@@ -129,6 +129,7 @@ def write_transactions(
             "reference_number": txn["reference_number"],
             "category": txn["category"],
             "subcategory": txn["subcategory"],
+            "payment_method": txn.get("payment_method", "Other"),
             "location": None,
             "embedding": embedding,
         }
@@ -142,6 +143,15 @@ def write_transactions(
                 inserted += 1
             else:
                 skipped += 1
+                log.warning(
+                    "Row skipped (conflict or silent error) — date: %s merchant: %s "
+                    "amount: %s type: %s ref: %s",
+                    values.get("transaction_date"),
+                    values.get("normalized_merchant", "")[:40],
+                    values.get("amount"),
+                    values.get("transaction_type"),
+                    values.get("reference_number"),
+                )
                 skipped_details.append({
                     "row_number": txn.get("row_number"),
                     "date": str(txn["transaction_date"]),
@@ -158,11 +168,12 @@ def write_transactions(
                 "result": "inserted" if was_inserted else "skipped",
             })
         except Exception as e:
-            log.warning(
-                "Transaction write failed: %s — date: %s merchant: %s",
+            log.error(
+                "Transaction insert failed — date: %s merchant: %s amount: %s error: %s",
+                values.get("transaction_date"),
+                values.get("normalized_merchant", "")[:40],
+                values.get("amount"),
                 str(e),
-                txn["transaction_date"],
-                txn["normalized_merchant"][:40],
             )
             skipped += 1
             skipped_details.append({

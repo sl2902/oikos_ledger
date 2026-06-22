@@ -135,7 +135,7 @@ export function AccountsSidebar() {
               if (remaining.length > 0) {
                 setSelectedAccountId(remaining[0].id)
               } else {
-                setSelectedAccountId(null)
+                setSelectedAccountId("")
               }
             }
             setDeletingAccountId(null)
