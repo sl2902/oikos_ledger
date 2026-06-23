@@ -52,7 +52,8 @@ Browser
 **Key pages:**
 - `/` — Dashboard with transaction list, filter bar, amendment modal, upload flow
 - `/insights` — Chat interface for natural language financial queries (text + voice)
-- `/recommendations` — On-demand AI spending recommendations vs RBI benchmarks (Iteration 5)
+- `/recommendations` — On-demand AI spending recommendations vs RBI benchmarks
+- `/analytics` — Multi-tab deterministic analytics: top merchants, payment methods over time, subcategories, debit vs credit
 
 **Constants layer** — `app/lib/constants/`:
 - `banks.ts` — 4 supported Indian banks (HDFC, Axis, ICICI, SBI) with display names and domains
@@ -118,6 +119,7 @@ POST /api/insights/query
 - `bar` — category ranked by total (vertical)
 - `horizontal_bar` — top merchants or long labels (horizontal)
 - `comparison_bar` — debits vs credits per time period
+- `multi_bar` — grouped bars with dynamic series (e.g. payment methods over time)
 - `pie` — category breakdown with percentages
 - `table` — multi-dimension or text-heavy results
 - `none` — single scalar answer

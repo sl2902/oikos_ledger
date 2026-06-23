@@ -4,9 +4,9 @@
 
 Three-column layout rendered inside `app/(dashboard)/layout.tsx`:
 
-1. **Nav sidebar** — collapsible, icon-only by default, expands on hover to 240px
+1. **Nav sidebar** — icon-only (56px), tooltips on hover. Nav items: Dashboard, Insights, Recommendations, Analytics. Macro Context item rendered but disabled (reduced opacity, not clickable).
 2. **Accounts panel** — 220px fixed, lists bank accounts for the authenticated user
-3. **Main panel** — `flex-1`, fills remaining space (transactions, insights, or recommendations)
+3. **Main panel** — `flex-1`, fills remaining space (transactions, insights, recommendations, or analytics)
 
 ---
 
@@ -67,6 +67,35 @@ Row 3: [ From  →  To ] (visible only when Custom Range is selected)
 
 ---
 
+## Analytics Panel
+
+`components/analytics/AnalyticsPanel.tsx`
+
+Four-tab breakdown of spending across different dimensions. All data comes from deterministic SQL via `POST /api/analytics` — no LLM.
+
+### Tabs
+
+| Tab | Dimension | Chart type | Filters |
+|---|---|---|---|
+| Merchants | Top 15 merchants by spend | `bar` | months, transaction type, category |
+| Payment Methods | Spend by method over time (pivoted wide) | `multi_bar` | months, transaction type |
+| Subcategories | Top 15 subcategories by spend | `bar` | months, transaction type, category |
+| Debit vs Credit | Monthly debit/credit comparison | `comparison_bar` | months |
+
+### Filters
+
+- **Month range** — Last 3 / 6 / 12 months
+- **Transaction type** — Debits / Credits / All (hidden on Debit vs Credit tab)
+- **Category** — populated from `GET /api/transactions/categories` (shown on Merchants and Subcategories tabs)
+
+### Persistence
+
+- Active tab stored in `localStorage` under `oikos_analytics_active_tab`
+- Filters stored per account per tab under `oikos_analytics_{accountId}_{tab}`
+- Filters restored on tab switch and account switch; fall back to defaults if no saved state
+
+---
+
 ## Insights Panel
 
 `components/insights/InsightsPanel.tsx`
@@ -108,11 +137,12 @@ Supported chart types:
 | `bar` | `category` or `normalized_merchant` | `total` or `amount` column |
 | `horizontal_bar` | same as bar | same as bar |
 | `comparison_bar` | `month` | `debits` and `credits` |
+| `multi_bar` | `month` / `week` / `day` / `date` | All remaining numeric columns as grouped bar series |
 | `pie` | `category` | `total` with `percentage` |
 | `table` | — | All columns, max 20 rows |
 | `none` | — | Not rendered |
 
-Line chart uses `connectNulls={true}` to bridge sparse date sequences. Single-point line charts fall back to bar.
+Line chart uses `connectNulls={true}` to bridge sparse date sequences. Single-point line charts fall back to bar. `multi_bar` derives series keys dynamically from column names — used for the payment methods tab where column names vary by account.
 
 ---
 
@@ -173,6 +203,8 @@ OpenAI → audio delta (PCM 24kHz) → AudioBufferSourceNode → GainNode → de
 | Upload polling | `setInterval` every 1s |
 | Selected account | `localStorage` + `AccountsContext` |
 | Filter state | `useState` in `TransactionsPanel`, reset on account switch |
+| Analytics filters | `localStorage` per account per tab, restored on tab/account switch |
+| Analytics active tab | `localStorage` under `oikos_analytics_active_tab` |
 | Insights turns | `sessionStorage` per account, restored on mount and account switch |
 | Date filter | `sessionStorage` per account |
 | Voice refs | `useRef` (never causes re-renders) for WebSocket, AudioContext, timers, flags |

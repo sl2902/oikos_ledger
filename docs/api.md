@@ -134,6 +134,19 @@ Returns a paginated list of transactions with month-level aggregates.
 
 ---
 
+### GET /api/transactions/categories
+
+Returns the distinct category names present in an account's transactions. Used to populate the Analytics page category filter.
+
+**Query params:** `account_id` (UUID, required)
+
+**Response:**
+```json
+["Finance", "Food", "Shopping", "Transport", "Utilities"]
+```
+
+---
+
 ### GET /api/transactions/months
 
 Returns up to the 3 most recent months that have transactions for an account.
@@ -363,6 +376,76 @@ Returns a cached query result by hash. Used when the user selects a suggestion f
 **Request body:** `{ "query_hash": "...", "account_id": "uuid" }`
 
 **Response:** Same shape as `POST /api/insights/query` JSON response.
+
+---
+
+## Analytics
+
+### POST /api/analytics
+
+Returns aggregated transaction data for a given dimension. Deterministic SQL — no LLM involved.
+
+**Request body:**
+```json
+{
+  "account_id": "uuid",
+  "dimension": "merchants",
+  "months": 3,
+  "category": "Food",
+  "transaction_type": "debit"
+}
+```
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `account_id` | UUID | Yes | Bank account to query |
+| `dimension` | string | Yes | One of `merchants`, `payment_methods`, `subcategories`, `debit_credit` |
+| `months` | integer | No | Lookback window — 3, 6, or 12. Default 3 |
+| `category` | string | No | Filter by category (applies to `merchants` and `subcategories` only) |
+| `transaction_type` | string | No | `debit`, `credit`, or `all`. Default `debit`. Ignored for `debit_credit` |
+
+**Dimension shapes:**
+
+`merchants` — top 15 merchants by spend:
+```json
+{
+  "rows": [
+    { "normalized_merchant": "Swiggy", "total": "4320.00", "txn_count": "12" }
+  ],
+  "dimension": "merchants"
+}
+```
+
+`payment_methods` — pivoted wide format, one row per month, one column per payment method:
+```json
+{
+  "rows": [
+    { "month": "2026-03", "UPI": 18200, "POS": 4300, "NEFT": 0 },
+    { "month": "2026-04", "UPI": 21000, "POS": 3100, "NEFT": 5000 }
+  ],
+  "dimension": "payment_methods"
+}
+```
+
+`subcategories` — top 15 subcategories by spend:
+```json
+{
+  "rows": [
+    { "subcategory": "Ride Share", "total": "2100.00", "txn_count": "8" }
+  ],
+  "dimension": "subcategories"
+}
+```
+
+`debit_credit` — monthly debit vs credit totals:
+```json
+{
+  "rows": [
+    { "month": "2026-03", "debits": "34500.00", "credits": "50000.00" }
+  ],
+  "dimension": "debit_credit"
+}
+```
 
 ---
 

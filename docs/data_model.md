@@ -136,6 +136,7 @@ Core financial data. **Append-only — no `updated_at`.** Corrections go to `tra
 | `reference_number` | TEXT | Nullable — `Chq/Ref Number` from bank CSV |
 | `category` | TEXT | |
 | `subcategory` | TEXT | Nullable |
+| `payment_method` | TEXT | |
 | `location` | GEOMETRY(Point, 4326) | Nullable — PostGIS |
 | `embedding` | VECTOR(1536) | pgvector |
 | `created_at` | TIMESTAMPTZ | |
@@ -384,7 +385,6 @@ Effective transaction values are computed at query time in `GET /api/transaction
      is_amended:          true if any amendments exist for this transaction
    }
    ```
-5. `payment_method` has no database column — computed from `raw_description` server-side, overridable by amendment
 
 ### Amendable vs immutable fields
 

@@ -16,7 +16,8 @@ Oikos Ledger is a personal finance intelligence app for Indian bank account hold
 | 2 | CSV ingestion pipeline — parser, normalizer, embedder, balance verification | **Complete** |
 | 3 | Transaction display — dashboard, list view, filters, amendments | **Complete** |
 | 4 | Spending insights — agentic NL→SQL, voice interface, chart rendering | **Complete** |
-| 5 | AI recommendations — RBI benchmark comparison, LLM cards, voice | **In Progress** |
+| 5 | AI recommendations — RBI benchmark comparison, LLM cards, voice | **Complete** |
+| 5.5 | Analytics page — deterministic multi-tab spend breakdown | **Complete** |
 | 6 | Demo prep — seed data, Aurora scaling, video, Devpost write-up | Planned |
 
 ---
@@ -243,14 +244,33 @@ Oikos Ledger is a personal finance intelligence app for Indian bank account hold
 - Miscellaneous: 16%
 
 **Deliverables:**
-- [ ] `app/app/recommendations/page.tsx`
-- [ ] `app/components/recommendations/RecommendationsPanel.tsx`
-- [ ] `app/components/recommendations/RecommendationCard.tsx`
-- [ ] `app/app/api/recommendations/route.ts`
-- [ ] Voice interface on recommendations page
-- [ ] Benchmark comparison logic with delta calculation
-- [ ] LLM-generated recommendation cards (streamed)
-- [ ] Status indicator per card (above/below/on-track)
+- [x] `app/app/(dashboard)/recommendations/page.tsx`
+- [x] `app/components/recommendations/RecommendationsPanel.tsx`
+- [x] `app/components/recommendations/RecommendationCard.tsx`
+- [x] `app/app/api/recommendations/route.ts`
+- [x] Benchmark comparison logic with delta calculation
+- [x] LLM-generated recommendation cards
+- [x] Status indicator per card (above/below/on-track)
+
+### Deviations and Notes
+
+- **Voice not added to recommendations** — the recommendations panel uses a dedicated chat-style UI without an OpenAI Realtime connection. Streaming SSE from `POST /api/recommendations` delivers cards progressively; voice deferred.
+- **`insufficient_data` guard** — if the account has no transactions, the route returns an empty recommendations list with `insufficient_data: true` rather than calling the LLM.
+
+---
+
+## Iteration 5.5 — Analytics Page
+
+**Goal:** Deterministic multi-dimensional spend breakdown with no LLM dependency.
+
+**Deliverables:**
+- [x] `/analytics` page with 4 tabs: Merchants, Payment Methods, Subcategories, Debit vs Credit
+- [x] `POST /api/analytics` — deterministic SQL for each dimension; payment methods pivoted to wide format
+- [x] `GET /api/transactions/categories` — per-account distinct category list
+- [x] `AnalyticsPanel` with per-tab/per-account filter persistence in `localStorage`
+- [x] `useTransactionCategories` hook
+- [x] `InsightsChart` `multi_bar` chart type for dynamic grouped bar series
+- [x] NavSidebar: Analytics nav item; Macro Context disabled
 
 ---
 
