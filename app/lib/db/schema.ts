@@ -72,6 +72,8 @@ export const voiceRoleEnum = pgEnum("voice_role", ["user", "assistant"]);
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
   email: text("email").notNull().unique(),
+  first_name: text("first_name"),
+  last_name: text("last_name"),
   country_code: text("country_code").notNull(),
   currency: text("currency").notNull(),
   income_bracket: text("income_bracket"),

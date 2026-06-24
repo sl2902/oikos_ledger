@@ -13,8 +13,11 @@
 import type { DefaultSession } from "next-auth"
 import NextAuth from "next-auth"
 import Google from "next-auth/providers/google"
+import { eq } from "drizzle-orm"
 import { authConfig } from "./auth.config"
 import { createUser, getUserByEmail } from "@/lib/db/queries/users"
+import { db } from "@/lib/db/client"
+import { users } from "@/lib/db/schema"
 
 declare module "next-auth" {
   interface Session {
@@ -22,6 +25,17 @@ declare module "next-auth" {
       id: string
     } & DefaultSession["user"]
   }
+}
+
+function splitName(fullName: string | null | undefined): {
+  first_name: string | undefined
+  last_name: string | undefined
+} {
+  if (!fullName) return { first_name: undefined, last_name: undefined }
+  const parts = fullName.trim().split(/\s+/)
+  const first_name = parts[0]
+  const last_name = parts.length > 1 ? parts.slice(1).join(" ") : undefined
+  return { first_name, last_name }
 }
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
@@ -38,12 +52,19 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     async signIn({ user }) {
       if (!user.email) return false
       const existing = await getUserByEmail(user.email)
+      const { first_name, last_name } = splitName(user.name)
       if (!existing) {
         await createUser({
           email: user.email,
+          first_name: first_name ?? user.email.split("@")[0],
+          last_name,
           country_code: "IN",
           currency: "INR",
         })
+      } else if (!existing.first_name && first_name) {
+        await db.update(users)
+          .set({ first_name, last_name })
+          .where(eq(users.id, existing.id))
       }
       return true
     },

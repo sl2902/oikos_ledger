@@ -81,7 +81,7 @@ export function AnalyticsPanel() {
           account_id: selectedAccountId,
           dimension: activeTab,
           months: filters.months,
-          category: filters.category || undefined,
+          category: (showCategoryFilter && filters.category) ? filters.category : undefined,
           transaction_type: filters.transaction_type,
         }),
       })
@@ -162,7 +162,12 @@ export function AnalyticsPanel() {
         {TABS.map((tab) => (
           <button
             key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
+            onClick={() => {
+              setActiveTab(tab.id)
+              if (tab.id === "debit_credit" || tab.id === "payment_methods") {
+                setFilters(prev => ({ ...prev, category: "" }))
+              }
+            }}
             className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors
               ${activeTab === tab.id
                 ? "border-primary text-primary"

@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -38,13 +38,17 @@ interface Props {
 export function FilterBar({ filters, onChange, availableMonths, selectedMonth, onMonthChange }: Props) {
   const { categories } = useCategories()
   const [searchValue, setSearchValue] = useState(filters.search ?? "")
+  const filtersRef = useRef(filters)
+  useEffect(() => { filtersRef.current = filters }, [filters])
+
+  const onChangeRef = useRef(onChange)
+  useEffect(() => { onChangeRef.current = onChange }, [onChange])
 
   useEffect(() => {
     const t = setTimeout(() => {
-      onChange({ ...filters, search: searchValue || undefined })
+      onChangeRef.current({ ...filtersRef.current, search: searchValue || undefined })
     }, 300)
     return () => clearTimeout(t)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchValue])
 
   useEffect(() => {

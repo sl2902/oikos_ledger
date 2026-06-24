@@ -158,22 +158,41 @@ export function TransactionsPanel() {
     balanceDiscrepancy: _balanceDiscrepancy,
   } = useTransactions(selectedAccountId, transactionFilters)
 
-  // Only reliable on page 1 — hide on subsequent pages to avoid wrong values
-  const closingBalance = page === 1 && transactions.length > 0
-    ? transactions[0].closing_balance ?? null
-    : null
+  const [balanceByMonth, setBalanceByMonth] = useState<
+    Record<string, { opening: string | null; closing: string | null }>
+  >({})
 
-  const openingBalance = page === 1 && transactions.length > 0
-    ? (() => {
-        const last = transactions[transactions.length - 1]
-        if (!last?.closing_balance) return null
-        const closing = Number(last.closing_balance)
-        const amount = Number(last.amount)
-        return last.transaction_type === "debit"
-          ? String(closing + amount)
-          : String(closing - amount)
-      })()
-    : null
+  useEffect(() => {
+    if (!selectedAccountId) return
+
+    let dateFrom: string | undefined
+    let dateTo: string | undefined
+
+    if (transactionFilters.month && transactionFilters.month !== "custom") {
+      const [y, m] = transactionFilters.month.split("-").map(Number)
+      dateFrom = `${y}-${String(m).padStart(2, "0")}-01`
+      const nextM = m === 12 ? 1 : m + 1
+      const nextY = m === 12 ? y + 1 : y
+      dateTo = `${nextY}-${String(nextM).padStart(2, "0")}-01`
+    } else if (transactionFilters.date_from || transactionFilters.date_to) {
+      dateFrom = transactionFilters.date_from
+      dateTo = transactionFilters.date_to
+    }
+
+    if (!dateFrom) return
+
+    const params = new URLSearchParams({ account_id: selectedAccountId })
+    if (dateFrom) params.set("date_from", dateFrom)
+    if (dateTo) params.set("date_to", dateTo)
+
+    fetch(`/api/transactions/balances?${params}`)
+      .then(r => r.json())
+      .then(json => setBalanceByMonth(prev => ({
+        ...prev,
+        ...(json.balances ?? {}),
+      })))
+      .catch(() => {})
+  }, [selectedAccountId, transactionFilters.month, transactionFilters.date_from, transactionFilters.date_to, isLoading])
 
   // Reset when no months available (transactions deleted)
   useEffect(() => {
@@ -294,18 +313,23 @@ export function TransactionsPanel() {
             )}
           </div>
         ) : (
-          grouped.map(([key, group], index) => (
-            <TransactionGroup
-              key={key}
-              month={group.label}
-              transactions={group.transactions}
-              showHeader={index === 0}
-              mutateTransactions={mutateTransactions}
-              balanceVerified={balanceVerified}
-              openingBalance={openingBalance}
-              closingBalance={closingBalance}
-            />
-          ))
+          grouped.map(([key, group]) => {
+            console.log("[grouped keys]", grouped.map(([key]) => key))
+            console.log("[balanceByMonth keys]", Object.keys(balanceByMonth))
+            const monthBalance = balanceByMonth[key]
+            return (
+              <TransactionGroup
+                key={key}
+                month={group.label}
+                transactions={group.transactions}
+                showHeader={true}
+                mutateTransactions={mutateTransactions}
+                balanceVerified={balanceVerified}
+                openingBalance={monthBalance?.opening ?? null}
+                closingBalance={monthBalance?.closing ?? null}
+              />
+            )
+          })
         )}
       </div>
 

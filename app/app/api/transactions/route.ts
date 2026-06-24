@@ -1,5 +1,5 @@
 import { auth } from "@/auth"
-import { and, asc, desc, eq, gte, ilike, lt, lte, or } from "drizzle-orm"
+import { and, asc, desc, eq, gte, ilike, lt, lte, or, sql } from "drizzle-orm"
 import { db } from "@/lib/db/client"
 import { transactions, uploads } from "@/lib/db/schema"
 import { getLatestAmendments } from "@/lib/db/queries/transactions"
@@ -43,11 +43,15 @@ export async function GET(request: Request) {
     return Response.json({ error: "account_id is required" }, { status: 400 })
   }
 
+  const userId = session.user.id
+  const accountId = account_id
+
   const conditions = [
-    eq(transactions.user_id, session.user.id),
-    eq(transactions.account_id, account_id),
+    eq(transactions.user_id, userId),
+    eq(transactions.account_id, accountId),
   ]
 
+  let monthFilter = ""
   if (month) {
     const [y, m] = month.split("-").map(Number)
     const monthStart = `${y}-${String(m).padStart(2, "0")}-01`
@@ -56,6 +60,7 @@ export async function GET(request: Request) {
     const nextMonthStart = `${nextY}-${String(nextM).padStart(2, "0")}-01`
     conditions.push(gte(transactions.transaction_date, monthStart))
     conditions.push(lt(transactions.transaction_date, nextMonthStart))
+    monthFilter = `AND transaction_date >= '${monthStart}' AND transaction_date < '${nextMonthStart}'`
   }
 
   if (search) {
@@ -131,8 +136,8 @@ export async function GET(request: Request) {
     })
     .from(uploads)
     .where(and(
-      eq(uploads.user_id, session.user.id),
-      eq(uploads.account_id, account_id),
+      eq(uploads.user_id, userId),
+      eq(uploads.account_id, accountId),
       eq(uploads.status, "complete"),
     ))
     .orderBy(desc(uploads.uploaded_at))
@@ -145,6 +150,8 @@ export async function GET(request: Request) {
     page,
     limit,
     total_pages,
+    closing_balance: null,
+    opening_balance: null,
     balance_verified: latestUpload?.balance_verified ?? null,
     balance_discrepancy: latestUpload?.balance_discrepancy ?? null,
     month_total_debits: totalDebits.toFixed(2),

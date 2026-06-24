@@ -70,14 +70,8 @@ interface RecommendationsResponse {
 
 export function RecommendationsPanel() {
   const { selectedAccountId, setSelectedAccountId, accounts } = useAccounts()
-  const [data, setData] = useState<RecommendationsResponse | null>(() => {
-    if (typeof window === "undefined") return null
-    return selectedAccountId ? getCached(selectedAccountId) : null
-  })
-  const [isLoading, setIsLoading] = useState(() => {
-    if (typeof window === "undefined") return false
-    return selectedAccountId ? getCached(selectedAccountId) === null : false
-  })
+  const [data, setData] = useState<RecommendationsResponse | null>(null)
+  const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isVoiceConnected, setIsVoiceConnected] = useState(false)
   const [showExplanation, setShowExplanation] = useState(false)
@@ -147,6 +141,17 @@ export function RecommendationsPanel() {
   useEffect(() => {
     fetchRecommendations()
   }, [fetchRecommendations])
+
+  // On mount, immediately show cached data if available
+  // This prevents loading flash on tab switch
+  useEffect(() => {
+    if (!selectedAccountId) return
+    const cached = getCached(selectedAccountId)
+    if (cached) {
+      setData(cached)
+      setIsLoading(false)
+    }
+  }, [selectedAccountId])
 
   function stopMicCapture() {
     processorRef.current?.disconnect()
@@ -530,7 +535,7 @@ Keep responses brief — this is a voice interaction.`
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full w-full flex-col overflow-hidden">
       {/* Header */}
       <div className="flex items-center justify-between border-b bg-background px-6 py-4 shrink-0">
         <div>
@@ -742,7 +747,7 @@ Keep responses brief — this is a voice interaction.`
                   {data.category_breakdown.map((cat) => {
                     const CATEGORY_EMOJI: Record<string, string> = {
                       Food: "🍔", Shopping: "🛍️", Entertainment: "🎬",
-                      Transport: "🚗", Travel: "✈️", Utilities: "⚡",
+                      Transport: "🚗", Travel: "✈️", Utilities: "⚡", Health: "💊",
                     }
                     const emoji = CATEGORY_EMOJI[cat.category] ?? "📊"
                     const underPercent = cat.baseline_monthly > 0
@@ -796,23 +801,68 @@ Keep responses brief — this is a voice interaction.`
           </div>
         ) : (
           <div className="space-y-4">
-            {data?.warning && (
-              <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
-                <span className="text-amber-500 shrink-0">⚠️</span>
-                <p className="text-xs text-amber-700">{data.warning}</p>
-              </div>
-            )}
-            {data?.is_stale && (
-              <div className="flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3">
-                <span className="text-blue-500 shrink-0">🕐</span>
-                <p className="text-xs text-blue-700">
-                  No transactions uploaded for {data.current_month}. Showing analysis for your most recent uploaded month ({data.analysis_month}).
-                </p>
-              </div>
-            )}
+            {/* Overspending cards */}
             {data?.recommendations.map((rec) => (
               <RecommendationCard key={rec.category} {...rec} />
             ))}
+
+            {/* Savings breakdown — shown when some categories are under baseline */}
+            {data?.category_breakdown && data.category_breakdown.length > 0 && (
+              <div className="rounded-xl border bg-card p-5 space-y-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-lg">✅</span>
+                  <p className="text-sm font-semibold text-slate-700">
+                    Where you&apos;re doing well
+                  </p>
+                </div>
+                <p className="text-xs text-muted-foreground">{data.message}</p>
+                <div className="space-y-2">
+                  {data.category_breakdown.map((cat) => {
+                    const CATEGORY_EMOJI: Record<string, string> = {
+                      Food: "🍔", Shopping: "🛍️", Entertainment: "🎬",
+                      Transport: "🚗", Travel: "✈️", Utilities: "⚡", Health: "💊",
+                    }
+                    const emoji = CATEGORY_EMOJI[cat.category] ?? "📊"
+                    const underPercent = cat.baseline_monthly > 0
+                      ? Math.round((cat.saving / cat.baseline_monthly) * 100)
+                      : 0
+                    return (
+                      <div key={cat.category} className="flex items-center gap-3">
+                        <span className="text-base w-6 text-center">{emoji}</span>
+                        <div className="flex-1">
+                          <div className="flex justify-between text-xs mb-0.5">
+                            <span className="font-medium text-slate-700">{cat.category}</span>
+                            <span className="text-emerald-600 font-medium">
+                              ₹{cat.saving.toLocaleString("en-IN")} under baseline
+                            </span>
+                          </div>
+                          <div className="relative h-1.5 rounded-full bg-slate-100">
+                            <div
+                              className="h-full rounded-full bg-emerald-400 transition-all"
+                              style={{
+                                width: `${Math.min(
+                                  Math.round((cat.projected_spend / cat.baseline_monthly) * 100),
+                                  100
+                                )}%`,
+                              }}
+                            />
+                          </div>
+                          <div className="flex justify-between text-xs text-muted-foreground mt-0.5">
+                            <span>Projected ₹{cat.projected_spend.toLocaleString("en-IN")}</span>
+                            <span>Baseline ₹{cat.baseline_monthly.toLocaleString("en-IN")}</span>
+                          </div>
+                        </div>
+                        {underPercent > 0 && (
+                          <span className="text-xs font-medium text-emerald-600 shrink-0">
+                            -{underPercent}%
+                          </span>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

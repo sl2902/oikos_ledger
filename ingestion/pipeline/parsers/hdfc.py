@@ -77,6 +77,72 @@ class HDFCParser(BaseCSVParser):
                     needs_llm=True,
                 )
 
+        if upper.startswith("ME DC SI"):
+            # Format: ME DC SI <CARD> <MERCHANT> (dr)
+            me_match = re.match(
+                r'ME DC SI\s+\S+\s+(.+?)\s*\(dr\)?$',
+                narration, re.IGNORECASE
+            )
+            if me_match:
+                merchant = me_match.group(1).strip().title()
+            else:
+                merchant = "Card Authorization"
+            return NarrationResult(
+                merchant=merchant,
+                payment_method="POS",
+                category="Other",
+                subcategory=None,
+                needs_llm=True,
+            )
+
+        if upper.startswith("CRV POS"):
+            # Format: CRV POS <CARD> <MERCHANT>(cr)
+            crv_match = re.match(
+                r'CRV POS\s+\S+\s+(.+?)\s*\(cr\)?$',
+                narration, re.IGNORECASE
+            )
+            if crv_match:
+                merchant = crv_match.group(1).strip().title()
+            else:
+                merchant = "Card Reversal"
+            return NarrationResult(
+                merchant=merchant,
+                payment_method="POS",
+                category="Other",
+                subcategory=None,
+                needs_llm=True,
+            )
+
+        if upper.startswith("TPT-"):
+            # Format: TPT-<TYPE>-<NAME>
+            tpt_match = re.match(
+                r'TPT-([A-Z]+)-(.+)$', narration, re.IGNORECASE
+            )
+            if tpt_match:
+                tpt_type = tpt_match.group(1).upper()
+                counterparty = tpt_match.group(2).strip().title()
+
+                TPT_TYPE_MAP = {
+                    "PER": ("Transfer", "Transfer", None),
+                    "BUS": ("Transfer", "Transfer", None),
+                    "SAL": ("Salary", "Finance", "Salary"),
+                }
+                payment_method, category, subcategory = TPT_TYPE_MAP.get(
+                    tpt_type, ("Transfer", "Transfer", None)
+                )
+            else:
+                counterparty = "Third Party Transfer"
+                payment_method = "Transfer"
+                category = "Transfer"
+                subcategory = None
+            return NarrationResult(
+                merchant=counterparty,
+                payment_method=payment_method,
+                category=category,
+                subcategory=subcategory,
+                needs_llm=False,
+            )
+
         if upper.startswith("ACH C-"):
             # Format: ACH C- <COMPANY>-<REF>
             ach_match = re.match(

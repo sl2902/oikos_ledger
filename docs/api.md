@@ -129,8 +129,38 @@ Returns a paginated list of transactions with month-level aggregates.
 **Notes:**
 - Ordered `(transaction_date DESC, row_number DESC)` — newest first, intra-day order matches original bank statement.
 - `month_total_debits` and `month_total_credits` reflect the **full unpaginated result**, not just the current page.
-- `payment_method` has no database column — computed from `raw_description` at query time and overridable by amendment.
+- `opening_balance` and `closing_balance` are always `null` — use `GET /api/transactions/balances` for per-month balances.
+- `payment_method` is a database column populated by the ingestion pipeline and overridable by amendment.
 - Amendments applied server-side; each transaction reflects effective values. `is_amended: true` when any amendment exists.
+
+---
+
+### GET /api/transactions/balances
+
+Returns per-month opening and closing balances for a date range. Used by `TransactionsPanel` to populate month group headers.
+
+**Query params:**
+
+| Param | Type | Required | Description |
+|---|---|---|---|
+| `account_id` | UUID | Yes | Bank account to query |
+| `date_from` | `YYYY-MM-DD` | No | Range start (returns `{}` if omitted) |
+| `date_to` | `YYYY-MM-DD` | No | Range end |
+
+**Response:**
+```json
+{
+  "balances": {
+    "2026-05": { "opening": "45200.00", "closing": "38750.50" },
+    "2026-04": { "opening": "51000.00", "closing": "45200.00" }
+  }
+}
+```
+
+**Notes:**
+- Uses `DISTINCT ON (month)` to pick the first and last transaction per month in a single pass.
+- Opening balance derived from the earliest transaction: `closing_balance ± amount` depending on `transaction_type`.
+- Returns `{ balances: {} }` when no date range is provided.
 
 ---
 
@@ -453,24 +483,59 @@ Returns aggregated transaction data for a given dimension. Deterministic SQL —
 
 ### POST /api/recommendations
 
-Returns on-demand personalised spending recommendations benchmarked against RBI/HCES 2022-23 household expenditure data.
+Returns personalised spending recommendations benchmarked against the user's own 3-month rolling baseline. Returns JSON — not streaming.
 
 **Request body:**
 ```json
+{ "account_id": "uuid" }
+```
+
+**Response:**
+```json
 {
-  "account_id": "uuid",
-  "date_from": "2026-03-01",
-  "date_to": "2026-05-31"
+  "recommendations": [
+    {
+      "category": "Food",
+      "baseline_monthly": 8200,
+      "current_spend": 6100,
+      "projected_spend": 10956,
+      "variance": 2756,
+      "top_merchants": ["Swiggy (Food Delivery)", "Zomato"],
+      "insight": "Your food delivery spend is tracking significantly higher than your usual pattern.",
+      "impact": "At this pace, you are projected to spend ₹10,956 — ₹2,756 above your baseline of ₹8,200.",
+      "action": "Consider setting a weekly cap on delivery apps and cooking at home mid-week.",
+      "is_stale": false
+    }
+  ],
+  "positive": false,
+  "total_savings": 1400,
+  "message": "You're overspending in some areas but saving in others. Keep it up on the wins!",
+  "current_month": "2026-06",
+  "analysis_month": "2026-06",
+  "is_stale": false,
+  "category_breakdown": [
+    {
+      "category": "Transport",
+      "baseline_monthly": 3200,
+      "current_spend": 1800,
+      "projected_spend": 2300,
+      "saving": 900
+    }
+  ],
+  "insufficient_data": false,
+  "baseline_months_available": 3,
+  "warning": null
 }
 ```
 
-**Response — streaming SSE:**
-```
-data: {"type":"card","title":"Food spending","your_pct":38,"benchmark_pct":46,"status":"on_track","insight":"Your food spending is below the national average — you're managing this well."}
+**Logic:**
+- Fetches category totals for the last 3 months. Categories checked: Food, Shopping, Entertainment, Transport, Travel, Health, Utilities.
+- If current month has no discretionary spend, falls back to the most recent uploaded month (`is_stale: true`, `effectiveElapsedFraction = 1.0`).
+- Pacing projection: `projected_spend = current_spend / elapsed_fraction` (fraction of month elapsed).
+- A category is flagged if `projected_spend - baseline > 5%` of baseline (Health threshold: 1.5×, Utilities threshold: 2× baseline).
+- Top 3 overspending categories sent to GPT-4o-mini for `insight` and `action` text. `impact` is generated programmatically from exact numbers.
+- `category_breakdown` lists discretionary categories where spending is under baseline (savings).
+- `positive: true` means no categories are overspending; `total_savings` is the sum of projected savings across under-baseline categories.
 
-data: {"type":"card","title":"Health","your_pct":1,"benchmark_pct":6,"status":"below","insight":"Your health spending is well below the RBI benchmark. Consider reviewing your health insurance coverage."}
-
-data: [DONE]
-```
-
-**Status values:** `on_track` | `above` | `below`
+**Insufficient data:**
+- Returns `insufficient_data: true` if the user has no transactions, or if there is data but no baseline months (only one month of history, nothing to compare against).

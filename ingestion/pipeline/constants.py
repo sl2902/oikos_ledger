@@ -187,8 +187,8 @@ CATEGORY_KEYWORDS: dict[str, list[str]] = {
         "billpay", "bill pay", "hdfcsi", "hdfc si", "standing instruction",
         "nach", "ecs", "credit card", "cc pay",
         # Investments
-        "zerodha", "groww", "upstox", "coin by zerodha", "kuvera",
-        "paytm money", "nps", "ppf", "epfo", "hdfcsec",
+        "axismutualfunds", "axismf", "zerodha", "groww", "upstox", 
+        "coin by zerodha", "kuvera", "paytm money", "nps", "ppf", "epfo", "hdfcsec",
         "sip", "mutual fund", "mf redemption", "mf purchase",
         "fixed deposit", "fd", "recurring deposit", "rd",
         "stocks", "equity", "demat", "ipo", "hsl sec", "hsl",
@@ -198,7 +198,9 @@ CATEGORY_KEYWORDS: dict[str, list[str]] = {
         "icici prudential", "sbi life", "bajaj allianz",
         "star health", "care health", "niva bupa",
         "vehicle insurance", "two wheeler insurance",
-        "term insurance", "ulip",
+        "godigit", "digit insurance", "insurance", "insur",
+        "bajajfinserv", "hdfcergo", "icicilombard", "starhealth",
+        "niacl", "orientalinsurance", "term insurance", "ulip",
         # Salary & income
         "salary", "sal cr", "payroll", "monthly salary",
         "stipend", "wages", "remuneration",
@@ -285,8 +287,15 @@ SUBCATEGORY_KEYWORDS: dict[str, list[str]] = {
     # Finance
     "EMI": ["emi", "loan", "equated"],
     "Credit Card": ["credit card", "card payment", "cc pay"],
-    "Investment": ["mutual fund", "sip", "zerodha", "groww", "hdfcsec",
+    "Investment": ["axismutualfunds", "axismf", "mutual fund", "sip", 
+                    "zerodha", "groww", "hdfcsec",
                    "upstox", "stocks", "shares"],
+    "Insurance": [
+                    "godigit", "digit", "insurance", "insur",
+                    "bajajfinserv", "hdfcergo", "icicilombard",
+                    "starhealth", "niacl", "orientalinsurance",
+                    "kotaklife", "kotak life", "lifeinsur",
+                ],
 }
 
 # Maps subcategory to its parent category

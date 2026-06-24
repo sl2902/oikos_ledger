@@ -136,6 +136,7 @@ export async function POST(req: Request) {
 
   // Stale month is complete; current calendar month uses real elapsed fraction
   const effectiveElapsedFraction = isStale ? 1.0 : elapsedFraction
+  console.log("[recs] dayOfMonth:", dayOfMonth, "daysInMonth:", daysInMonth, "elapsedFraction:", elapsedFraction, "isStale:", isStale, "effectiveElapsedFraction:", effectiveElapsedFraction)
 
   // Derive baseline month count from the fetched rows
   const distinctMonths = new Set(
@@ -247,44 +248,33 @@ export async function POST(req: Request) {
   recommendations.sort((a, b) => b.variance - a.variance)
   const top3 = recommendations.slice(0, 3)
 
-  if (top3.length === 0) {
-    let totalSavings = 0
-    const categoryBreakdown: {
-      category: string
-      baseline_monthly: number
-      current_spend: number
-      projected_spend: number
-      saving: number
-    }[] = []
+  // Always compute savings breakdown for under-baseline categories
+  let totalSavings = 0
+  const categoryBreakdown: {
+    category: string
+    baseline_monthly: number
+    current_spend: number
+    projected_spend: number
+    saving: number
+  }[] = []
 
-    for (const category of DISCRETIONARY) {
-      const data = categoryMap[category]
-      if (!data || data.baseline.length === 0) continue
-      const baselineMonthly = data.baseline.reduce((a, b) => a + b, 0) / data.baseline.length
-      const projected = effectiveElapsedFraction > 0 ? data.current / effectiveElapsedFraction : data.current
-      const saving = baselineMonthly - projected
-      if (saving > 0) totalSavings += saving
-      categoryBreakdown.push({
-        category,
-        baseline_monthly: Math.round(baselineMonthly),
-        current_spend: Math.round(data.current),
-        projected_spend: Math.round(projected),
-        saving: Math.round(saving),
-      })
-    }
-
-    return NextResponse.json({
-      recommendations: [],
-      positive: true,
-      total_savings: totalSavings,
-      message: `You're beating your 3-month baseline across every discretionary category. Projected to save ₹${Math.round(totalSavings).toLocaleString("en-IN")} extra this month.`,
-      current_month: currentMonthKey,
-      analysis_month: analysisMonthKey,
-      is_stale: isStale,
-      category_breakdown: categoryBreakdown,
-      insufficient_data: false,
-      baseline_months_available: baselineMonthCount,
-      warning,
+  for (const category of DISCRETIONARY) {
+    const data = categoryMap[category]
+    if (!data || data.baseline.length === 0) continue
+    if (data.current === 0) continue
+    const baselineMonthly = data.baseline.reduce((a, b) => a + b, 0) / data.baseline.length
+    const projected = effectiveElapsedFraction > 0
+      ? data.current / effectiveElapsedFraction
+      : data.current
+    const saving = baselineMonthly - projected
+    if (saving <= 0) continue
+    if (saving > 0) totalSavings += saving
+    categoryBreakdown.push({
+      category,
+      baseline_monthly: Math.round(baselineMonthly),
+      current_spend: Math.round(data.current),
+      projected_spend: Math.round(projected),
+      saving: Math.round(saving),
     })
   }
 
@@ -293,13 +283,19 @@ Generate concise, actionable recommendations for overspending categories.
 Use Indian Rupee (₹). Be specific, warm, and practical.
 Reference the top merchants if provided.
 Keep each field to 1-2 sentences maximum.
+CRITICAL: Use ONLY the exact numbers provided in the data below.
+Do NOT compute or estimate your own figures.
+Use projected_spend, variance, and current_spend exactly as given.
+Do not round differently or substitute your own calculations.
 ${isStale
-  ? "IMPORTANT: This data is for a COMPLETED past month. Write insight and impact in past tense — what happened, not what might happen. Do NOT say 'by month-end' or 'at this rate'. Action should focus on the upcoming month."
-  : "This is the current month in progress. Write insight and impact to reflect ongoing spending and future projection."}
+  ? "IMPORTANT: This data is for a COMPLETED past month. Write insight in past tense — what happened, not what might happen. Action should focus on the upcoming month."
+  : "This is the current month in progress. Write insight to reflect ongoing spending."}
 For Health category specifically: acknowledge that health spending can be unpredictable and avoid making the user feel guilty. Frame the insight as awareness, not criticism. Suggest practical steps like checking if purchases were necessary or could be optimised (e.g. generic medicines vs branded).
 
 Respond with a JSON array of objects with these exact keys:
-insight, impact, action
+insight, action
+
+Do NOT include impact — it will be generated separately.
 
 Categories data:
 ${JSON.stringify(top3.map(r => ({
@@ -331,26 +327,44 @@ Respond with JSON array only, no other text.`
     top3.forEach((rec, i) => {
       if (cards[i]) {
         rec.insight = cards[i].insight || ""
-        rec.impact = cards[i].impact || ""
         rec.action = cards[i].action || ""
       }
+      // Generate impact programmatically using exact numbers
+      const projectedFmt = Math.round(rec.projected_spend).toLocaleString("en-IN")
+      const varianceFmt = Math.round(rec.variance).toLocaleString("en-IN")
+      const baselineFmt = Math.round(rec.baseline_monthly).toLocaleString("en-IN")
+      rec.impact = rec.is_stale
+        ? `You spent ₹${varianceFmt} more than your usual baseline of ₹${baselineFmt}.`
+        : `At this pace, you are projected to spend ₹${projectedFmt} — ₹${varianceFmt} above your baseline of ₹${baselineFmt}.`
     })
   } catch {
     top3.forEach((rec) => {
       rec.insight = `You've spent ₹${Math.round(rec.current_spend).toLocaleString("en-IN")} on ${rec.category} so far this month.`
-      rec.impact = `At this rate, you'll spend ₹${Math.round(rec.projected_spend).toLocaleString("en-IN")} — ₹${Math.round(rec.variance).toLocaleString("en-IN")} above your usual baseline.`
+      const projectedFmt = Math.round(rec.projected_spend).toLocaleString("en-IN")
+      const varianceFmt = Math.round(rec.variance).toLocaleString("en-IN")
+      const baselineFmt = Math.round(rec.baseline_monthly).toLocaleString("en-IN")
+      rec.impact = rec.is_stale
+        ? `You spent ₹${varianceFmt} more than your usual baseline of ₹${baselineFmt}.`
+        : `At this pace, you are projected to spend ₹${projectedFmt} — ₹${varianceFmt} above your baseline of ₹${baselineFmt}.`
       rec.action = `Review your ${rec.category.toLowerCase()} spending and identify what you can reduce.`
     })
   }
 
+  const isFullyPositive = top3.length === 0
+
   return NextResponse.json({
     recommendations: top3,
-    positive: false,
-    total_savings: 0,
-    message: "",
+    positive: isFullyPositive,
+    total_savings: totalSavings,
+    message: isFullyPositive
+      ? `You're beating your 3-month baseline across every discretionary category. Projected to save ₹${Math.round(totalSavings).toLocaleString("en-IN")} extra this month.`
+      : categoryBreakdown.length > 0
+      ? `You're overspending in some areas but saving in others. Keep it up on the wins!`
+      : "",
     current_month: currentMonthKey,
     analysis_month: analysisMonthKey,
     is_stale: isStale,
+    category_breakdown: categoryBreakdown,
     insufficient_data: false,
     baseline_months_available: baselineMonthCount,
     warning,

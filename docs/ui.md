@@ -46,6 +46,7 @@ Row 3: [ From  →  To ] (visible only when Custom Range is selected)
 - Month tabs populated from `GET /api/transactions/months` (up to 3 most recent)
 - Category dropdown populated from `GET /api/categories`
 - Filter state held in `TransactionsPanel` and reset on account switch
+- Search debounce uses `filtersRef` and `onChangeRef` refs so the closure always reads current state without causing extra re-renders or resetting pagination
 
 ### Transaction List (scrollable)
 
@@ -53,6 +54,7 @@ Row 3: [ From  →  To ] (visible only when Custom Range is selected)
 
 - Transactions grouped by month; each group rendered by `TransactionGroup`
 - **Month heading** (sticky): `{Month name} | Opening ₹X | Debits –₹X | Credits +₹X | Closing ₹X | ⚠ Balance mismatch`
+- Opening and closing balances fetched from `GET /api/transactions/balances` on filter/account change — not derived from transaction data on the client
 - 20 transactions per page
 - Columns: Date · Merchant · Category · Method · Amount
 - Edit icon on row hover
@@ -203,6 +205,7 @@ OpenAI → audio delta (PCM 24kHz) → AudioBufferSourceNode → GainNode → de
 | Upload polling | `setInterval` every 1s |
 | Selected account | `localStorage` + `AccountsContext` |
 | Filter state | `useState` in `TransactionsPanel`, reset on account switch |
+| Per-month balances | `useState` in `TransactionsPanel`, fetched from `/api/transactions/balances` on filter/account change |
 | Analytics filters | `localStorage` per account per tab, restored on tab/account switch |
 | Analytics active tab | `localStorage` under `oikos_analytics_active_tab` |
 | Insights turns | `sessionStorage` per account, restored on mount and account switch |

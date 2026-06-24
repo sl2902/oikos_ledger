@@ -59,7 +59,11 @@ const QUICK_QUESTIONS = [
 const VOICE_ENABLED = process.env.NEXT_PUBLIC_VOICE_ENABLED === "true"
 
 
-export function InsightsPanel() {
+interface InsightsPanelProps {
+  firstName?: string
+}
+
+export function InsightsPanel({ firstName }: InsightsPanelProps) {
   const { selectedAccountId, setSelectedAccountId, accounts } = useAccounts()
   const [question, setQuestion] = useState("")
   const [isLoading, setIsLoading] = useState(false)
@@ -634,7 +638,8 @@ export function InsightsPanel() {
           ws.send(JSON.stringify({
             type: "response.create",
             response: {
-              instructions: "Greet the user warmly in exactly one brief sentence. Keep it short.",
+              instructions: `Greet the user warmly by name in exactly one brief sentence.
+      Address them as "${firstName || "there"}". Keep it short and friendly.`,
             },
           }));
           isResponseInProgress.current = true;

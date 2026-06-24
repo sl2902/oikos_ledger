@@ -2,7 +2,7 @@ import { RecommendationsPanel } from "@/components/recommendations/Recommendatio
 
 export default function RecommendationsPage() {
   return (
-    <div className="flex h-full">
+    <div className="flex h-full w-full overflow-hidden">
       <RecommendationsPanel />
     </div>
   )

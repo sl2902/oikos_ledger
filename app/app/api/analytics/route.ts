@@ -19,7 +19,7 @@ export async function POST(req: Request) {
   const userId = session.user.id
 
   const dateFilter = `
-    AND transaction_date >= DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '${months - 1} months'
+    AND transaction_date >= DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '${months} months'
     AND transaction_date < DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month'
   `
 
@@ -90,7 +90,6 @@ export async function POST(req: Request) {
         ${typeFilter}
         ${dateFilter}
         ${categoryFilter}
-        AND subcategory IS NOT NULL
       GROUP BY subcategory
       ORDER BY total DESC
       LIMIT 15

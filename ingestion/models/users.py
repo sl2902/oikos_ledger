@@ -28,6 +28,8 @@ class User(SQLModel, table=True):
         sa_column=Column(sa.UUID, primary_key=True, server_default=text("gen_random_uuid()")),
     )
     email: str = Field(unique=True)
+    first_name: str
+    last_name: Optional[str] = Field(default=None)
     country_code: str
     currency: str
     income_bracket: Optional[str] = Field(default=None)
