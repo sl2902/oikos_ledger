@@ -13,6 +13,7 @@
 import type { DefaultSession } from "next-auth"
 import NextAuth from "next-auth"
 import Google from "next-auth/providers/google"
+import Credentials from "next-auth/providers/credentials"
 import { eq } from "drizzle-orm"
 import { authConfig } from "./auth.config"
 import { createUser, getUserByEmail } from "@/lib/db/queries/users"
@@ -23,6 +24,7 @@ declare module "next-auth" {
   interface Session {
     user: {
       id: string
+      isGuest?: boolean
     } & DefaultSession["user"]
   }
 }
@@ -44,6 +46,18 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     Google({
       clientId: process.env.GOOGLE_CLIENT_ID!,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+    }),
+    Credentials({
+      id: "guest",
+      name: "Guest",
+      credentials: {},
+      async authorize() {
+        return {
+          id: "8e6d5c65-87ff-4746-959f-2b1ed1cc45a9",
+          email: "demo@oikosledger.app",
+          name: "Demo User",
+        }
+      },
     }),
   ],
   callbacks: {
@@ -71,6 +85,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
     // Runs on sign-in (user populated) and on every JWT refresh (user undefined).
     async jwt({ token, user }) {
+      if (user?.email === "demo@oikosledger.app") {
+        token["userId"] = "8e6d5c65-87ff-4746-959f-2b1ed1cc45a9"
+        token["isGuest"] = true
+        return token
+      }
       if (user?.email) {
         const dbUser = await getUserByEmail(user.email)
         if (dbUser) token["userId"] = dbUser.id
@@ -81,6 +100,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     async session({ session, token }) {
       if (typeof token["userId"] === "string") {
         session.user.id = token["userId"]
+      }
+      if (token["isGuest"]) {
+        session.user.isGuest = true
       }
       return session
     },

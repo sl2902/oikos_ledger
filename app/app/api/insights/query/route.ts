@@ -325,6 +325,15 @@ SQL Rules (always enforced):
   - Never use DROP, DELETE, UPDATE, INSERT, TRUNCATE, ALTER
   - Add LIMIT 100 unless aggregating
   - Use TO_CHAR(transaction_date, 'YYYY-MM') for month grouping
+  - "Last N months" means from the start of the month N months ago,
+    not N×30 days ago. Always use:
+    DATE_TRUNC('month', CURRENT_DATE) - INTERVAL 'N months'
+    NOT CURRENT_DATE - INTERVAL 'N months'
+  - NEVER pass a string literal to DATE_TRUNC. Always use CURRENT_DATE
+    or a column reference, never a quoted date string.
+  - CORRECT: DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '3 months'
+  - WRONG: DATE_TRUNC('month', '2026-06-01') - INTERVAL '3 months'
+  - Example: "last 3 months" → transaction_date >= DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '3 months'
   - DO NOT include 'currency' in SELECT unless explicitly asked
   - Use ILIKE '%value%' for merchant/category text matching
   - Do NOT expand category words into sub-arrays

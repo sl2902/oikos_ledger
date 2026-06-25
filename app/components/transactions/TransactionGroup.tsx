@@ -18,7 +18,7 @@ interface Props {
 
 export function TransactionGroup({ month, transactions, showHeader, mutateTransactions, balanceVerified, openingBalance, closingBalance }: Props) {
   const [amendingTransaction, setAmendingTransaction] = useState<EffectiveTransaction | null>(null)
-  const [balanceVisible, setBalanceVisible] = useState(true)
+  const [balanceVisible, setBalanceVisible] = useState(false)
 
   const currencySymbol = transactions[0]
     ? (SUPPORTED_CURRENCIES.find((c) => c.code === transactions[0].currency)?.symbol ?? "₹")

@@ -26,6 +26,26 @@ interface AnalyticsFilters {
   transaction_type: string
 }
 
+const CACHE_TTL_MS = 60 * 60 * 1000 // 1 hour
+
+function getAnalyticsCached(key: string): Record<string, unknown>[] | null {
+  try {
+    const raw = sessionStorage.getItem(key)
+    if (!raw) return null
+    const { data, ts } = JSON.parse(raw)
+    if (Date.now() - ts > CACHE_TTL_MS) return null
+    return data
+  } catch {
+    return null
+  }
+}
+
+function setAnalyticsCache(key: string, data: Record<string, unknown>[]) {
+  try {
+    sessionStorage.setItem(key, JSON.stringify({ data, ts: Date.now() }))
+  } catch {}
+}
+
 function getStorageKey(accountId: string, tab: Dimension) {
   return `oikos_analytics_${accountId}_${tab}`
 }
@@ -69,8 +89,20 @@ export function AnalyticsPanel() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (force = false) => {
     if (!selectedAccountId) return
+
+    const cacheKey = `oikos_analytics_cache_${selectedAccountId}_${activeTab}_${filters.months}_${filters.category}_${filters.transaction_type}`
+
+    if (!force) {
+      const cached = getAnalyticsCached(cacheKey)
+      if (cached) {
+        setData(cached)
+        setIsLoading(false)
+        return
+      }
+    }
+
     setIsLoading(true)
     setError(null)
     try {
@@ -81,13 +113,14 @@ export function AnalyticsPanel() {
           account_id: selectedAccountId,
           dimension: activeTab,
           months: filters.months,
-          category: (showCategoryFilter && filters.category) ? filters.category : undefined,
+          category: ((activeTab === "merchants" || activeTab === "subcategories") && filters.category) ? filters.category : undefined,
           transaction_type: filters.transaction_type,
         }),
       })
       if (!res.ok) throw new Error("Failed to fetch analytics")
       const json = await res.json()
       setData(json.rows ?? [])
+      setAnalyticsCache(cacheKey, json.rows ?? [])
     } catch {
       setError("Failed to load analytics. Please try again.")
     } finally {
@@ -226,7 +259,7 @@ export function AnalyticsPanel() {
         )}
 
         <button
-          onClick={fetchData}
+          onClick={() => fetchData(true)}
           className="ml-auto text-xs text-muted-foreground hover:text-foreground
             underline underline-offset-2"
         >
@@ -243,7 +276,7 @@ export function AnalyticsPanel() {
         ) : error ? (
           <div className="flex h-48 items-center justify-center text-sm text-destructive">
             {error}
-            <button onClick={fetchData} className="ml-2 underline">Retry</button>
+            <button onClick={() => fetchData()} className="ml-2 underline">Retry</button>
           </div>
         ) : data.length === 0 ? (
           <div className="flex h-48 items-center justify-center text-sm text-muted-foreground">

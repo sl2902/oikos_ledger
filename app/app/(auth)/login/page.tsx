@@ -17,7 +17,7 @@ export default function LoginPage() {
         </CardTitle>
         <CardDescription>Your household financial intelligence</CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-3">
         <form
           action={async () => {
             "use server"
@@ -28,6 +28,30 @@ export default function LoginPage() {
             Continue with Google
           </Button>
         </form>
+
+        <div className="relative">
+          <div className="absolute inset-0 flex items-center">
+            <span className="w-full border-t" />
+          </div>
+          <div className="relative flex justify-center text-xs uppercase">
+            <span className="bg-background px-2 text-muted-foreground">or</span>
+          </div>
+        </div>
+
+        <form
+          action={async () => {
+            "use server"
+            await signIn("guest", { redirectTo: "/" })
+          }}
+        >
+          <Button type="submit" variant="outline" className="w-full">
+            Try as Guest
+          </Button>
+        </form>
+
+        <p className="text-center text-xs text-muted-foreground">
+          Guest mode uses pre-loaded demo data. No account required.
+        </p>
       </CardContent>
     </Card>
   )

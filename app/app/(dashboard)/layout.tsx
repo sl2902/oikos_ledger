@@ -2,6 +2,7 @@ import { auth, signOut } from "@/auth"
 import { redirect } from "next/navigation"
 import { AccountsProvider } from "@/components/accounts/AccountsContext"
 import { NavSidebar } from "@/components/nav/NavSidebar"
+import { GuestProvider } from "@/components/guest/GuestContext"
 import { getUserById } from "@/lib/db/queries/users"
 
 export default async function DashboardLayout({
@@ -32,11 +33,17 @@ export default async function DashboardLayout({
     await signOut({ redirectTo: "/login" })
   }
 
+  const isGuest = session.user?.isGuest ?? false
+
   return (
     <div className="flex h-screen">
       <NavSidebar user={session.user ?? {}} signOutAction={signOutAction} />
       <main className="flex-1 overflow-hidden">
-        <AccountsProvider>{children}</AccountsProvider>
+        <AccountsProvider>
+          <GuestProvider isGuest={isGuest}>
+            {children}
+          </GuestProvider>
+        </AccountsProvider>
       </main>
     </div>
   )

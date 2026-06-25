@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useAccounts } from "@/components/accounts/AccountsContext"
+
 import { useTransactions, type TransactionFilters } from "@/lib/hooks/useTransactions"
 import { useAvailableMonths } from "@/lib/hooks/useAvailableMonths"
 import { BankLogo } from "@/components/bank_accounts/BankLogo"

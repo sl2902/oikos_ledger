@@ -7,7 +7,7 @@ import { RecommendationCard } from "./RecommendationCard"
 
 const VOICE_ENABLED = process.env.NEXT_PUBLIC_VOICE_ENABLED === "true"
 
-const CACHE_TTL_MS = 5 * 60 * 1000 // 5 minutes
+const CACHE_TTL_MS = 60 * 60 * 1000 // 1 hour
 
 function getCached(accountId: string): RecommendationsResponse | null {
   try {
