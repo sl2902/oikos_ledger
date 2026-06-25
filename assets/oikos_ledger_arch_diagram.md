@@ -37,46 +37,39 @@ flowchart LR
         Realtime["Realtime API\n(Bidirectional Voice Node)"]:::gateway
     end
 
-    %% 5. Cloud Infrastructure Layer
+    %% 5. Cloud Infrastructure Layer with Native Text Symbols
     subgraph AWS["☁️ AWS Infrastructure (ap-south-1)"]
-        S3["Amazon S3\n(Statement Document Store)"]:::storage
-        Lambda["AWS Lambda (Python 3.12)\n(Parse → Normalize → Embed)"]:::compute
+        S3["📦 [Amazon S3]\nStatement Document Store"]:::storage
+        Lambda["⚡ [AWS Lambda]\nParse → Normalize → Embed"]:::compute
         
-        subgraph Aurora["Aurora PostgreSQL Serverless v2 Cluster"]
-            DB["Core Relational Database\n• transactions  • bank_accounts\n• users  • merchants  • uploads\n• query_cache (pgvector 1536d)"]:::database
+        subgraph Aurora["🗄️ Aurora PostgreSQL Serverless v2 Cluster"]
+            DB["Database Instance\n• transactions  • bank_accounts\n• users  • merchants  • uploads\n• query_cache (pgvector 1536d)"]:::database
         end
     end
 
     %% --- Connection Pathways ---
-
-    %% User / Browser Routing
     User -->|HTTPS| NextClient
     User -->|Direct Upload via Presigned URL| S3
     User <-->|Direct WebSocket Audio Stream| Realtime
 
-    %% Next.js Frontend to Internal Serverless APIs
     NextClient -->|Session Handshake| AuthAPI
     NextClient -->|Fetch Records| TxnAPI
     NextClient -->|Submit Text Prompt| InsightsAPI
     NextClient -->|Request Ephemeral Token| SessionAPI
     NextClient -->|POST Tailored Feeds| RecsAPI
 
-    %% External Identity Hook
     AuthAPI <-->|Token Validation Exchange| Google
 
-    %% Serverless Compute to Core Database
     TxnAPI -->|Read / Write Ledger Data| DB
     InsightsAPI -->|Execute Compiled SQL| DB
     RecsAPI -->|Rolling Baseline Query| DB
 
-    %% Serverless Compute to Model Synthesizers
     InsightsAPI -->|Translate Text to SQL| GPT
     InsightsAPI -->|Generate Query Vector| Embed
     InsightsAPI -->|Vector Semantic Search| DB
     RecsAPI -->|Insight → Impact → Action Analysis| GPT
     SessionAPI -->|Provision Access Token| Realtime
 
-    %% Async Data Ingestion Pipeline (AWS Native)
     S3 -->|S3 Object Created Event Trigger| Lambda
     Lambda -->|Normalize Merchants| GPT
     Lambda -->|Generate Merchant Name Vectors| Embed
@@ -84,3 +77,16 @@ flowchart LR
 
     %% Apply structural container backgrounds
     class Vercel,AWS,AuthCloud,OpenAI compute;
+
+    %% --- Dynamic Link Color Stylings ---
+    %% Routes going to Aurora in Green
+    linkStyle 9,10,11,14 stroke:#2e7d32,stroke-width:2.5px;
+    
+    %% Lambda to Aurora in Blue
+    linkStyle 20 stroke:#1565c0,stroke-width:2.5px;
+    
+    %% Routes to OpenAI in Purple
+    linkStyle 12,13,15,16 stroke:#6a1b9a,stroke-width:2.5px;
+    
+    %% Lambda to OpenAI in Black
+    linkStyle 18,19 stroke:#212121,stroke-width:2.5px;  
