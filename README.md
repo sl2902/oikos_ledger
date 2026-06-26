@@ -20,7 +20,7 @@ Oikos Ledger is a conversational personal finance app that turns Indian bank sta
 
 ## Architecture
 
-[Oikos Ledger Architecture](https://github.com/sl2902/oikos_ledger/blob/main/assets/oikos_ledger_architecture.png)
+![Oikos Ledger Architecture](https://github.com/sl2902/oikos_ledger/blob/main/assets/oikos_ledger_architecture.png)
 
 **Tech stack:**
 - Frontend: Next.js 15 App Router, TypeScript, Tailwind CSS, shadcn/ui — deployed on Vercel
@@ -33,7 +33,7 @@ Oikos Ledger is a conversational personal finance app that turns Indian bank sta
 
 ## Data model
 
-[Oikos Ledger Data Model](https://github.com/sl2902/oikos_ledger/blob/main/assets/oikos_ledger_er_v1.png)
+![Oikos Ledger Data Model](https://github.com/sl2902/oikos_ledger/blob/main/assets/oikos_ledger_er_v1.png)
 
 ---
 
