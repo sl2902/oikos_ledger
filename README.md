@@ -21,37 +21,7 @@ Oikos Ledger is a conversational personal finance app that turns Indian bank sta
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                   Browser / Client                   │
-│         Next.js 15 UI (Vercel)                       │
-│  Transactions · Insights · Recommendations · Analytics│
-└────────┬──────────────────────────┬──────────────────┘
-         │ HTTPS                    │ WebSocket (voice)
-         ▼                          ▼
-┌─────────────────┐      ┌─────────────────────┐
-│  Next.js API    │      │  OpenAI Realtime API │
-│  Routes         │      │  (voice interface)   │
-│  /api/auth      │      └─────────────────────┘
-│  /api/transactions      
-│  /api/insights  │──── GPT-4o-mini (NL→SQL, recommendations)
-│  /api/recs      │──── text-embedding-3-small (pgvector cache)
-│  /api/analytics │
-└────────┬────────┘
-         │ SSL (pg)
-         ▼
-┌─────────────────────────────────────────────────────┐
-│         Aurora PostgreSQL Serverless v2              │
-│         ap-south-1                                   │
-│  transactions · bank_accounts · users · uploads      │
-│  merchants (pgvector 1536d) · query_cache (pgvector) │
-└─────────────────────────────────────────────────────┘
-         ▲
-         │ INSERT (SSL)
-┌────────┴────────┐
-│  AWS Lambda     │◄── S3 (presigned URL upload)
-│  Python 3.12    │
-│  Parse → Normalise → Embed → Insert
-└─────────────────┘
+[Oikos Ledger Architecture](https://github.com/sl2902/oikos_ledger/blob/main/assets/oikos_ledger_architecture.png)
 ```
 
 **Tech stack:**
@@ -66,60 +36,7 @@ Oikos Ledger is a conversational personal finance app that turns Indian bank sta
 ## Data model
 
 ```
-users
-  id (uuid PK)
-  email (unique)
-  first_name, last_name
-  country_code, currency
-
-bank_accounts
-  id (uuid PK)
-  user_id → users.id
-  bank_name, account_type, account_nickname, currency
-
-uploads
-  id (uuid PK)
-  user_id → users.id
-  account_id → bank_accounts.id
-  filename, status, balance_verified, balance_discrepancy
-
-transactions
-  id (uuid PK)
-  user_id → users.id
-  account_id → bank_accounts.id
-  upload_id → uploads.id
-  merchant_id → merchants.id (nullable)
-  transaction_date, raw_description, normalized_merchant
-  amount, closing_balance, currency
-  transaction_type (debit | credit)
-  category, subcategory, payment_method
-  reference_number
-  embedding (vector 1536)
-  ── unique: (user_id, account_id, transaction_date, amount,
-              transaction_type, reference_number) with fallback
-              to (user_id, account_id, transaction_date, amount,
-              transaction_type, raw_description, closing_balance)
-
-transaction_amendments
-  id (uuid PK)
-  transaction_id → transactions.id
-  user_id → users.id
-  field_name, old_value, new_value
-  (sidecar pattern — original rows never mutated)
-
-merchants
-  id (uuid PK)
-  canonical_name (unique)
-  category, subcategory
-  embedding (vector 1536)
-
-query_cache
-  id (uuid PK)
-  user_id → users.id
-  account_id → bank_accounts.id
-  question_embedding (vector 1536)
-  sql, results, chart_type
-  expires_at (24h TTL)
+[Oikos Ledger Data Model](https://github.com/sl2902/oikos_ledger/blob/main/assets/oikos_ledger_er_v1.png)
 ```
 
 ---
@@ -133,15 +50,15 @@ Click **Try as Guest** on the login page. No Google account required. The guest 
 
 ### Testing the upload
 1. Sign in as guest (or with your own Google account)
-2. Download a sample statement: [`demo_hdfc_statement.csv`](./demo_hdfc_statement.csv)
-3. On the Transactions page, click **Upload Statement**
+2. Download a sample statement: [`demo_hdfc_statement.csv`](https://raw.githubusercontent.com/sl2902/oikos_ledger/refs/heads/main/ingestion/tests/fixtures/demo/demo_hdfc_statement.csv)
+3. On the Transactions page, click **Upload Statement** in the top right corner
 4. Select HDFC Bank and upload the CSV
 5. Wait ~30–60 seconds for Lambda to process
 
 ### Resetting guest data
 If you want to start fresh as a guest:
 1. Go to Transactions page
-2. Click the history icon (🕐) next to the bank account
+2. Click the upload history icon (🕐) next to the bank account
 3. Delete the existing upload
 4. Re-upload the demo CSV
 
