@@ -70,7 +70,7 @@ If you want to start fresh as a guest:
 
 ### Prerequisites
 - Node.js 20+
-- Python 3.12+
+- Python 3.11+
 - `uv` (Python package manager)
 - AWS CLI configured for `ap-south-1`
 - PostgreSQL client (psql)
