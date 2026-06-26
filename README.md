@@ -96,6 +96,8 @@ uv sync
 ```env
 # Database
 DATABASE_URL=postgresql://user:password@your-aurora-endpoint:5432/oikos
+DATABASE_URL_DIRECT=postgresql://user:password@your-aurora-endpoint:5432/oikos
+DB_PROVIDER=aurora
 
 # Auth
 NEXTAUTH_URL=http://localhost:3000
