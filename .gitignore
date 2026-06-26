@@ -29,3 +29,4 @@ tests/fixture/statements/*
 output.json
 scripts/test_hdfc.csv
 ingestion/tests/fixtures/statements/*
+.vercel
