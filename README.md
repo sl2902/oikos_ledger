@@ -24,7 +24,7 @@ Oikos Ledger is a conversational personal finance app that turns Indian bank sta
 
 **Tech stack:**
 - Frontend: Next.js 15 App Router, TypeScript, Tailwind CSS, shadcn/ui — deployed on Vercel
-- Ingestion: Python 3.12 Lambda, triggered by S3 object creation
+- Ingestion: Python 3.12 Lambda, invoked directly by the Next.js upload API route after storing the file in S3
 - Database: Aurora PostgreSQL Serverless v2, pgvector extension
 - AI: OpenAI GPT-4o-mini (NL→SQL, recommendations), text-embedding-3-small (semantic cache), Realtime API (voice)
 - Auth: NextAuth v5, Google OAuth
