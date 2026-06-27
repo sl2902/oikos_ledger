@@ -14,6 +14,14 @@ export async function DELETE(
     return Response.json({ error: "Unauthorized" }, { status: 401 })
   }
 
+  // Prevent guest user from deleting accounts
+  if (session.user.id === process.env.GUEST_USER_ID) {
+    return Response.json(
+      { error: "Account deletion is disabled in guest mode." },
+      { status: 403 }
+    )
+  }
+
   const { account_id } = await params
 
   // Verify account belongs to user

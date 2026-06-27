@@ -10,9 +10,11 @@ import { UploadHistoryModal } from "@/components/uploads/UploadHistoryModal"
 import { DeleteAccountModal } from "@/components/accounts/DeleteAccountModal"
 import { getBankDomain } from "@/lib/constants/banks"
 import type { SupportedBankName } from "@/lib/constants/banks"
+import { useGuest } from "@/components/guest/GuestContext"
 
 export function AccountsSidebar() {
   const { accounts, isLoading, selectedAccountId, setSelectedAccountId, mutate } = useAccounts()
+  const isGuest = useGuest()
   const [historyAccountId, setHistoryAccountId] = useState<string | null>(null)
   const [deletingAccountId, setDeletingAccountId] = useState<string | null>(null)
 
@@ -82,17 +84,19 @@ export function AccountsSidebar() {
                       >
                         <History className="h-3.5 w-3.5" />
                       </button>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setDeletingAccountId(account.id)
-                        }}
-                        className="rounded p-1 text-muted-foreground transition-colors hover:bg-background hover:text-destructive"
-                        title="Delete account"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
+                      {!isGuest && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setDeletingAccountId(account.id)
+                          }}
+                          className="rounded p-1 text-muted-foreground transition-colors hover:bg-background hover:text-destructive"
+                          title="Delete account"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
                     </div>
                   </div>
                 </li>

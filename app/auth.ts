@@ -53,7 +53,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       credentials: {},
       async authorize() {
         return {
-          id: "8e6d5c65-87ff-4746-959f-2b1ed1cc45a9",
+          id: process.env.GUEST_USER_ID ?? "",
           email: "demo@oikosledger.app",
           name: "Demo User",
         }
@@ -86,7 +86,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     // Runs on sign-in (user populated) and on every JWT refresh (user undefined).
     async jwt({ token, user }) {
       if (user?.email === "demo@oikosledger.app") {
-        token["userId"] = "8e6d5c65-87ff-4746-959f-2b1ed1cc45a9"
+        token["userId"] = process.env.GUEST_USER_ID ?? ""
         token["isGuest"] = true
         return token
       }

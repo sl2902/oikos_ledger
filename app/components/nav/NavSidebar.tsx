@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation"
 import { BarChart2, Globe, LayoutDashboard, Lightbulb, Sparkles, LogOut } from "lucide-react"
 
 const NAV_ITEMS: { href: string; label: string; icon: React.ElementType; disabled?: boolean }[] = [
-  { href: "/", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/", label: "Transactions", icon: LayoutDashboard },
   { href: "/insights", label: "Insights", icon: Lightbulb },
   { href: "/recommendations", label: "Recommendations", icon: Sparkles },
   { href: "/analytics", label: "Analytics", icon: BarChart2 },

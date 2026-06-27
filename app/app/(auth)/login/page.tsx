@@ -1,4 +1,7 @@
-import { signIn } from "@/auth"
+"use client"
+
+import { useState } from "react"
+import { signIn } from "next-auth/react"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -9,6 +12,9 @@ import {
 } from "@/components/ui/card"
 
 export default function LoginPage() {
+  const [guestLoading, setGuestLoading] = useState(false)
+  const [googleLoading, setGoogleLoading] = useState(false)
+
   return (
     <Card className="w-full max-w-sm">
       <CardHeader className="space-y-1 text-center">
@@ -18,16 +24,16 @@ export default function LoginPage() {
         <CardDescription>Your household financial intelligence</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
-        <form
-          action={async () => {
-            "use server"
-            await signIn("google", { redirectTo: "/" })
+        <Button
+          className="w-full"
+          disabled={googleLoading}
+          onClick={async () => {
+            setGoogleLoading(true)
+            await signIn("google", { callbackUrl: "/" })
           }}
         >
-          <Button type="submit" className="w-full">
-            Continue with Google
-          </Button>
-        </form>
+          {googleLoading ? "Redirecting..." : "Continue with Google"}
+        </Button>
 
         <div className="relative">
           <div className="absolute inset-0 flex items-center">
@@ -38,16 +44,17 @@ export default function LoginPage() {
           </div>
         </div>
 
-        <form
-          action={async () => {
-            "use server"
-            await signIn("guest", { redirectTo: "/" })
+        <Button
+          variant="outline"
+          className="w-full"
+          disabled={guestLoading}
+          onClick={async () => {
+            setGuestLoading(true)
+            await signIn("guest", { callbackUrl: "/" })
           }}
         >
-          <Button type="submit" variant="outline" className="w-full">
-            Try as Guest
-          </Button>
-        </form>
+          {guestLoading ? "Loading demo..." : "Try as Guest"}
+        </Button>
 
         <p className="text-center text-xs text-muted-foreground">
           Guest mode uses pre-loaded demo data. No account required.
