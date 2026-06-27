@@ -7,7 +7,7 @@ import { RecommendationCard } from "./RecommendationCard"
 
 const VOICE_ENABLED = process.env.NEXT_PUBLIC_VOICE_ENABLED === "true"
 
-const CACHE_TTL_MS = 60 * 60 * 1000 // 1 hour
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000 // 24 hours
 
 function getCached(accountId: string): RecommendationsResponse | null {
   try {
@@ -68,7 +68,11 @@ interface RecommendationsResponse {
   warning?: string | null
 }
 
-export function RecommendationsPanel() {
+interface RecommendationsPanelProps {
+  firstName?: string
+}
+
+export function RecommendationsPanel({ firstName }: RecommendationsPanelProps) {
   const { selectedAccountId, setSelectedAccountId, accounts } = useAccounts()
   const [data, setData] = useState<RecommendationsResponse | null>(null)
   const [isLoading, setIsLoading] = useState(false)
@@ -373,7 +377,7 @@ Keep responses brief — this is a voice interaction.`
           }))
           ws.send(JSON.stringify({
             type: "response.create",
-            response: { instructions: "Greet the user warmly and briefly mention you can discuss their spending recommendations." },
+            response: { instructions: `Greet the user warmly by name in exactly one brief sentence. Address them as "${firstName || "there"}". Mention you can help them understand their spending recommendations.` },
           }))
           isResponseInProgress.current = true
         } catch (err) {

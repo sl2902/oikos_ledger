@@ -26,7 +26,7 @@ interface AnalyticsFilters {
   transaction_type: string
 }
 
-const CACHE_TTL_MS = 60 * 60 * 1000 // 1 hour
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000 // 24 hours
 
 function getAnalyticsCached(key: string): Record<string, unknown>[] | null {
   try {

@@ -5,6 +5,9 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Oikos Ledger",
   description: "Personal finance intelligence",
+  icons: {
+    icon: '/fallback-bank-icon.svg',
+  },
 };
 
 export default function RootLayout({
