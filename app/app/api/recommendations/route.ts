@@ -61,7 +61,7 @@ export async function POST(req: Request) {
       AND account_id = '${account_id}'
       AND transaction_type = 'debit'
       AND transaction_date >= DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '3 months'
-      AND transaction_date < DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month'
+      AND transaction_date <= CURRENT_DATE
       AND category != 'Other'
     GROUP BY category, month
     ORDER BY category, month
@@ -114,7 +114,7 @@ export async function POST(req: Request) {
           AND account_id = '${account_id}'
           AND transaction_type = 'debit'
           AND transaction_date >= DATE_TRUNC('month', TO_DATE('${recentMonth}', 'YYYY-MM')) - INTERVAL '3 months'
-          AND transaction_date < DATE_TRUNC('month', TO_DATE('${recentMonth}', 'YYYY-MM')) + INTERVAL '1 month'
+          AND transaction_date <= CURRENT_DATE
           AND category != 'Other'
         GROUP BY category, month
         ORDER BY category, month
