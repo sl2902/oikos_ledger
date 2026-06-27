@@ -46,7 +46,7 @@ Click **Try as Guest** on the login page. No Google account required. The guest 
 
 ### Testing the upload
 1. Sign in as guest (or with your own Google account)
-2. Download a sample statement: [`demo_hdfc_statement.csv`](https://raw.githubusercontent.com/sl2902/oikos_ledger/refs/heads/main/ingestion/tests/fixtures/demo/demo_hdfc_statement.csv)
+2. Download a sample statement: [`demo_hdfc_statement.csv`](https://raw.githubusercontent.com/sl2902/oikos_ledger/refs/heads/main/ingestion/tests/fixtures/demo/demo_hdfc_statement_full.csv)
 3. On the Transactions page, click **Upload Statement** in the top right corner
 4. Select HDFC Bank and upload the CSV
 5. Wait ~30–60 seconds for Lambda to process
@@ -63,6 +63,8 @@ If you want to start fresh as a guest:
 - **Insights** — type or speak a question (e.g. *"Plot my food expenses for the last 3 months"*)
 - **Recommendations** — spending vs 3-month baseline with projected overspend
 - **Analytics** — merchant breakdown, payment method trends, subcategory drilldown, debit vs credit
+
+> Note: Demo statements have been uploaded until July 15 to ensure recommendations show live current-month data during the judging period.
 
 ---
 
