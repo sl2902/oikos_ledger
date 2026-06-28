@@ -162,11 +162,11 @@ If an early LLM call returns an incorrect category, that value is cached and ser
 
 ---
 
-## 10. SBI, ICICI, Axis Parsers
+## 10. Parser Coverage and Limitations
 
-Parsers implemented but not tested against real bank statement data. Column formats assumed from public documentation and may differ from actual exports.
+Parsers were implemented for HDFC, ICICI, Axis, and SBI. HDFC, Axis, and SBI were tested against real bank statement data. HDFC has the most comprehensive coverage across multiple months. Axis and SBI were tested against a limited number of months, so edge cases in their narration formats may not yet be fully handled. ICICI was not tested against real statement data — column formats were assumed from public documentation and may differ from actual exports.
 
-**Required before production support:** End-to-end test with real statements from each bank and parser fixture files analogous to `tests/test_parser.py` for HDFC.
+**Required before production support:** Additional real statement samples for Axis and SBI to cover more narration patterns, and end-to-end testing for ICICI with fixture files analogous to `tests/test_parser.py` for HDFC.
 
 ---
 
