@@ -1,5 +1,5 @@
 import { auth } from "@/auth"
-import { db } from "@/lib/db/client"
+import { dbReadonly } from "@/lib/db/client"
 import { sql } from "drizzle-orm"
 
 export const dynamic = "force-dynamic"
@@ -22,7 +22,7 @@ export async function POST(request: Request) {
   const userId = session.user.id
 
   try {
-    const result = (await db.execute(sql.raw(`
+    const result = (await dbReadonly.execute(sql.raw(`
       SELECT result
       FROM query_cache
       WHERE user_id = '${userId}'

@@ -1,5 +1,5 @@
 import { auth } from "@/auth"
-import { db } from "@/lib/db/client"
+import { db, dbReadonly } from "@/lib/db/client"
 import { sql } from "drizzle-orm"
 import OpenAI from "openai"
 
@@ -168,7 +168,7 @@ async function getExactCacheHit(
   queryHash: string,
 ): Promise<Record<string, unknown> | null> {
   try {
-    const result = (await db.execute(sql.raw(`
+    const result = (await dbReadonly.execute(sql.raw(`
       SELECT result
       FROM query_cache
       WHERE user_id = '${userId}'
@@ -194,7 +194,7 @@ async function getSimilarCacheHits(
   queryHash: string,
 ): Promise<{ query_text: string; query_hash: string }[]> {
   try {
-    const result = (await db.execute(sql.raw(`
+    const result = (await dbReadonly.execute(sql.raw(`
       SELECT query_text, query_hash,
         1 - (query_embedding <=> '[${embedding.join(",")}]'::vector)
           AS similarity
@@ -223,7 +223,7 @@ async function getCacheByHash(
   queryHash: string,
 ): Promise<Record<string, unknown> | null> {
   try {
-    const result = (await db.execute(sql.raw(`
+    const result = (await dbReadonly.execute(sql.raw(`
       SELECT result
       FROM query_cache
       WHERE user_id = '${userId}'
@@ -333,7 +333,11 @@ SQL Rules (always enforced):
     or a column reference, never a quoted date string.
   - CORRECT: DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '3 months'
   - WRONG: DATE_TRUNC('month', '2026-06-01') - INTERVAL '3 months'
-  - Example: "last 3 months" → transaction_date >= DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '3 months'
+  - ALWAYS add an upper bound of AND transaction_date <= CURRENT_DATE
+    to prevent fetching future-dated transactions
+  - Example: "last 3 months" →
+    transaction_date >= DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '3 months'
+    AND transaction_date <= CURRENT_DATE
   - DO NOT include 'currency' in SELECT unless explicitly asked
   - Use ILIKE '%value%' for merchant/category text matching
   - Do NOT expand category words into sub-arrays
@@ -495,7 +499,7 @@ async function runAgentLoop(
   }
 
   // Execute SQL
-  const results = (await db.execute(
+  const results = (await dbReadonly.execute(
     sql.raw(parsedSQL),
   )) as unknown as { rows: Record<string, unknown>[] }
   const rows = results.rows ?? []
@@ -707,7 +711,7 @@ export async function POST(request: Request) {
       console.log("Final querySQL:", querySQL)
       console.log("dateFilter:", dateFilter)
       console.log("account_id:", account_id)
-      const rangeResult = (await db.execute(sql.raw(`
+      const rangeResult = (await dbReadonly.execute(sql.raw(`
         SELECT
           MIN(transaction_date) AS min_date,
           MAX(transaction_date) AS max_date,
@@ -782,7 +786,7 @@ export async function POST(request: Request) {
     }
 
     try {
-      const results = (await db.execute(
+      const results = (await dbReadonly.execute(
         sql.raw(querySQL),
       )) as unknown as { rows: Record<string, unknown>[] }
       const rows = results.rows ?? []
@@ -790,7 +794,7 @@ export async function POST(request: Request) {
       const totalDebits = rows.reduce((sum, r) => sum + Number(r.debits ?? 0), 0)
       const totalCredits = rows.reduce((sum, r) => sum + Number(r.credits ?? 0), 0)
 
-      const currencyResult = (await db.execute(sql.raw(`
+      const currencyResult = (await dbReadonly.execute(sql.raw(`
         SELECT DISTINCT currency FROM transactions
         WHERE user_id = '${userId}' AND account_id = '${account_id}'
         LIMIT 1
@@ -917,7 +921,7 @@ Summarize these results accurately.`,
   }
 
   // Custom query — run agent loop
-  const currencyResult = (await db.execute(sql.raw(`
+  const currencyResult = (await dbReadonly.execute(sql.raw(`
     SELECT DISTINCT currency FROM transactions
     WHERE user_id = '${userId}' AND account_id = '${account_id}'
     LIMIT 1

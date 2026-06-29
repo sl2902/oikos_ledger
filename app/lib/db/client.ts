@@ -21,4 +21,13 @@ try {
 
 export const db = drizzle(pool!, { schema });
 
+const readonlyPool = process.env.DATABASE_URL_READONLY
+  ? new Pool({
+      connectionString: process.env.DATABASE_URL_READONLY,
+      ssl: { rejectUnauthorized: false },
+      max: 10,
+    })
+  : pool!
+
+export const dbReadonly = drizzle(readonlyPool!, { schema });
 
